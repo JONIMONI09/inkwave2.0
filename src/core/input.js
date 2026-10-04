@@ -11,6 +11,12 @@ export class Input {
     this.canvas = canvas;
     this.keys = new Set();
     this.pressed = new Set();       // keys pressed this frame
+    // touch controls (core/touch.js) write here: virtual keys behave exactly like real ones, moveAxis
+    // is the analog left-thumb stick (x strafe, y forward) and mouse.left is the fire button
+    this.vkeys = new Set();
+    this.vpressed = new Set();
+    this.moveAxis = { x: 0, y: 0 };
+    this.touchOnly = false;         // touch device: pointer lock is never available, skip requesting it
     this.mouse = { dx: 0, dy: 0, left: false, right: false, leftPressed: false, rightPressed: false };
     this.locked = false;
     this.enabled = true;
@@ -40,7 +46,7 @@ export class Input {
       if (e.code === 'Tab') e.preventDefault();
     });
     window.addEventListener('keyup', (e) => { this.keys.delete(e.code); });
-    window.addEventListener('blur', () => { this.keys.clear(); this.mouse.left = this.mouse.right = false; });
+    window.addEventListener('blur', () => { this.keys.clear(); this.vkeys.clear(); this.mouse.left = this.mouse.right = false; });
     window.addEventListener('mousemove', (e) => {
       if (!this.locked) return;
       this.mouse.dx += e.movementX; this.mouse.dy += e.movementY;
@@ -63,7 +69,7 @@ export class Input {
   }
 
   requestLock() {
-    if (this.locked) return;
+    if (this.locked || this.touchOnly) return;
     try {
       const p = this.canvas.requestPointerLock({ unadjustedMovement: true });
       // some platforms reject unadjustedMovement: fall back to a plain request
@@ -72,8 +78,8 @@ export class Input {
   }
   exitLock() { if (document.pointerLockElement) document.exitPointerLock(); }
 
-  down(code) { return this.keys.has(code); }
-  wasPressed(code) { return this.pressed.has(code); }
+  down(code) { return this.keys.has(code) || this.vkeys.has(code); }
+  wasPressed(code) { return this.pressed.has(code) || this.vpressed.has(code); }
 
   pollPad() {
     const pads = navigator.getGamepads ? navigator.getGamepads() : [];
@@ -135,8 +141,9 @@ export class Input {
 
   // Call once at the very end of each frame.
   endFrame() {
-    this.pressed.clear();
+    this.pressed.clear(); this.vpressed.clear();
     this.mouse.dx = 0; this.mouse.dy = 0;
     this.mouse.leftPressed = false; this.mouse.rightPressed = false;
+    // moveAxis is NOT cleared here: it's owned by the touch stick (zeroed on release), not per-frame
   }
 }

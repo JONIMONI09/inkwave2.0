@@ -14,9 +14,15 @@ const opt = (k, d) => { const i = args.indexOf('--' + k); return i >= 0 ? args[i
 const W = +opt('w', 1600), H = +opt('h', 900);
 
 const browser = await puppeteer.launch({
-  executablePath: '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+  // CHROME env override for CI (GitHub Actions installs Chrome for Testing); macOS default keeps the
+  // local workflow. Metal is Apple-only — Linux CI runs SwiftShader software WebGL.
+  executablePath: process.env.CHROME || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
   headless: 'new',
-  args: ['--use-angle=metal', '--enable-gpu', '--ignore-gpu-blocklist', '--autoplay-policy=no-user-gesture-required', `--window-size=${W},${H}`],
+  args: [
+    ...(process.platform === 'darwin' && !process.env.CHROME ? ['--use-angle=metal'] : ['--enable-unsafe-swiftshader']),
+    '--enable-gpu', '--ignore-gpu-blocklist', '--autoplay-policy=no-user-gesture-required', `--window-size=${W},${H}`,
+    ...(process.env.CHROME_ARGS ? process.env.CHROME_ARGS.split(' ').filter(Boolean) : []),
+  ],
   defaultViewport: { width: W, height: H, deviceScaleFactor: 1 },
 });
 // always take the browser down with us (an orphaned headless Chrome keeps spinning its WebGL loop at 100 % CPU)
@@ -32,7 +38,9 @@ page.on('pageerror', (e) => logs.push(`[pageerror] ${e.message}\n${(e.stack || '
 try {
 await page.goto(url, { waitUntil: 'load', timeout: 180000 });
 for (const s of steps) {
-  if (s.until) { try { await page.waitForFunction(s.until, { timeout: 180000, polling: 150 }); } catch { console.log('until timeout', s.until); } }
+  // UNTIL_MS lets slow environments (CI software WebGL) wait longer for boot; the assertion itself
+  // is unchanged — a page that never gets there still fails the run.
+  if (s.until) { try { await page.waitForFunction(s.until, { timeout: +(process.env.UNTIL_MS || 180000), polling: 150 }); } catch { console.log('until timeout', s.until); } }
   if (s.wait) await new Promise((r) => setTimeout(r, s.wait));
   if (s.down) await page.keyboard.down(s.down);
   if (s.up) await page.keyboard.up(s.up);

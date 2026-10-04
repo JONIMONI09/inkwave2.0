@@ -3,6 +3,7 @@ import * as THREE from 'three';
 import { G, on, emit, clamp, damp } from './core/ctx.js';
 import { Renderer } from './core/renderer.js';
 import { Input } from './core/input.js';
+import { TouchControls, isTouchDevice } from './core/touch.js';
 import { mapTheme,
   DEFAULT_SETTINGS, QUALITY, TEAM_PALETTES, COLORBLIND_PALETTE, TEAM_NAMES, WEAPONS, WEAPON_ORDER, WEAPON_SUCCESSOR, ZONES, SUB, SUBS, SUB_ORDER, SPECIALS, SPECIAL_ORDER,
   MAPS, DIFFICULTY, PLAYER, PROGRESSION, VERSION, MATCH, OFFLINE_MAPS, mapOfflineOk, mapNoBots, mapBossOk,
@@ -57,6 +58,13 @@ class Game {
     // real top-down thumbnails for the stage cards, generated from each layout's geometry
     for (const m of MAPS) { try { m.thumb = layoutThumbSVG(MAP_LAYOUTS[m.layout || m.id], m.theme); } catch (e) { console.warn('thumb', m.id, e); } }
     this.settings = G.settings = loadJSON('inkwave.settings', DEFAULT_SETTINGS);
+    // phones / tablets, first run: pick the potato preset so a cheap Android gets playable fps out of
+    // the box (render density far below CSS pixels, no shadows/bloom). One saved setting and it never
+    // overrides again — the settings menu has the full ladder including Lite.
+    if (!localStorage.getItem('inkwave.settings') && isTouchDevice()) {
+      Object.assign(this.settings, { quality: 'potato', shadows: false, bloom: false, fpsCap: 60, showFps: true });
+      saveJSON('inkwave.settings', this.settings);
+    }
     // desktop app: the window's fullscreen state is owned by the native shell; mirror it into settings for the menu
     if (window.inkwaveNative) {
       this.settings.fullscreen = window.inkwaveNative.isFullScreen();
@@ -90,6 +98,10 @@ class Game {
     camera.position.set(0, 40, -60);
     this.R.setScene(scene, camera);
     this.input = G.input = new Input(this.R.renderer.domElement);
+    // touch devices (phones/tablets): on-screen controls instead of pointer lock + keyboard
+    this.isTouch = isTouchDevice() && !params.has('no-touch');
+    this.input.touchOnly = this.isTouch;
+    if (this.isTouch) this.touch = new TouchControls(this.input, { onPause: () => this._touchPause() });
     this.input.onKey = (e, repeat) => this._onKey(e, repeat);
     this.input.onUnlock = () => this._onPointerUnlock();
     // after a focus steal while the map was held, the next click on the game takes the mouse back (no pause detour)
@@ -446,6 +458,11 @@ class Game {
     // Holding the map is never a reason to pause (some browsers/embeds steal focus on TAB): relock on the next click.
     if (this.match?.controller?.mapHeld || (this.rig?.mapK ?? 0) > 0) { this._relock = true; return; }
     if (G.mode === 'match' && this.match && !this.match.paused && this.match.state === 'playing' && !this.menus?.current) this.pause();
+  }
+  // the touch layer's pause button (phones have no Esc / Start key)
+  _touchPause() {
+    if (this.match?.paused) this.resume();
+    else this.pause();
   }
   // pull the fog back while the view is overhead (the stage is ~150 m away up there), restore it exactly after
   _dioFog() {
@@ -1200,6 +1217,8 @@ class Game {
     ps.calls = G.renderer.info.render.calls; ps.tris = G.renderer.info.render.triangles;
     // HUD
     if (m && !m.attract && this.hud && (m.state === 'playing' || m.state === 'intro' || m.state === 'finish')) this._updateHud(dt);
+    // touch controls live only during actual play (never over menus, pause, results or the attract stage)
+    this.touch?.setVisible(!!(m && !m.attract && !m.paused && !this.menus?.current && (m.state === 'playing' || m.state === 'intro' || m.state === 'finish')));
     this.menus?.update?.(dt);
     this.input.endFrame();
   }
@@ -1330,16 +1349,17 @@ class Game {
     let prompt = null;
     const inkF = a.ink / PLAYER.inkMax;
     if (m.state === 'playing' && a.alive) {
+      const touch = !!this.touch;
       if (m.controller?.mapHeld) prompt = null;   // the map diorama carries its own super-jump hints
       else if (a.superJumpState) prompt = null;
-      else if (this._lowInkFlash > 0) { this._lowInkFlash -= dt; prompt = 'Low ink! Hold SHIFT in your ink to refill'; }
-      else if (a.specialReady() && (this._hints.specialT = (this._hints.specialT || 0) + dt) > 2) prompt = `Special ready! Press F`;
-      else if (inkF < 0.25 && a.form !== 'squid') prompt = 'Hold SHIFT to swim in your ink and refill';
+      else if (this._lowInkFlash > 0) { this._lowInkFlash -= dt; prompt = touch ? 'Low ink! Hold SQUID in your ink to refill' : 'Low ink! Hold SHIFT in your ink to refill'; }
+      else if (a.specialReady() && (this._hints.specialT = (this._hints.specialT || 0) + dt) > 2) prompt = touch ? 'Special ready! Tap SP' : 'Special ready! Press F';
+      else if (inkF < 0.25 && a.form !== 'squid') prompt = touch ? 'Hold SQUID to swim in your ink and refill' : 'Hold SHIFT to swim in your ink and refill';
       else if (m.duration - m.time < 8 && !this._hints.shot) prompt = m.zones ? 'Ink the zone and hold it to count down!' : 'Paint the ground — most turf wins!';
       if (!a.specialReady()) this._hints.specialT = 0;
       if (a.intent.fire) this._hints.shot = true;
     }
-    if (m.practice && m.state === 'playing' && a.alive && this._hintT < 7) prompt = 'Practice · L to change loadout · ESC for the practice menu';
+    if (m.practice && m.state === 'playing' && a.alive && this._hintT < 7) prompt = this.touch ? 'Practice · pause menu → loadout' : 'Practice · L to change loadout · ESC for the practice menu';
     const strikeAim = !!(a.specialActive && a.specialActive.id === 'strike' && a.specialActive.aiming);
     // "Yeah!" cheers → screen positions over the cheering player (anyone on screen)
     const cheers = [];

@@ -1,0 +1,91 @@
+# INKWAVE CI: syntax + map checks on every push/PR, a headless smoke match, and a GitHub Pages
+# deploy of the assembled static build (dist/) on main.
+#
+# The game has no bundler: `npm run check` syntax-checks every module, `npm run check-maps`
+# validates every stage layout (and its Zone Control variant), and the smoke job boots the real
+# game in headless Chrome and autopilots 8 s of a match, failing on any console error.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  checks:
+    name: Syntax + map checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run check
+      - run: npm run music
+      - run: npm run check-maps
+
+  smoke:
+    name: Headless smoke match
+    runs-on: ubuntu-latest
+    needs: checks
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      # songs/manifest.json is gitignored; without it the page logs a 404 and smoke would fail
+      - run: npm run music
+      - name: Install Chrome for Testing
+        id: chrome
+        run: |
+          npx -y @puppeteer/browsers install chrome@stable --path "$HOME/chrome" > chrome-path.txt
+          echo "path=$(head -1 chrome-path.txt | awk '{print $2}')" >> "$GITHUB_OUTPUT"
+      - name: Boot the game and autopilot a match
+        timeout-minutes: 8
+        run: |
+          python3 tools/serve.py 8490 &
+          for i in $(seq 1 30); do curl -sf http://localhost:8490/ >/dev/null && break; sleep 1; done
+          # UNTIL_MS: software WebGL boots slower than a real GPU; the smoke still fails on any
+          # console error, page error, or a game that never reaches "playing"
+          CHROME="${{ steps.chrome.outputs.path }}" UNTIL_MS=300000 SMOKE_W=640 SMOKE_H=360 npm run smoke
+
+  deploy-pages:
+    name: Deploy to GitHub Pages
+    runs-on: ubuntu-latest
+    needs: [checks, smoke]
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    concurrency:
+      group: pages
+      cancel-in-progress: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run music
+      # assembles dist/: the game plus only the three.js addons it imports (tools/build-dist.py)
+      - run: npm run build
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+      - id: deployment
+        uses: actions/deploy-pages@v4
