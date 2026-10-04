@@ -2776,3 +2776,52 @@ circle.iw-ico-cut { fill: var(--cut, #fff); }
 .iw-mode__zone { display: block; width: calc(var(--u) * 8); height: calc(var(--u) * 8); color: #fff; filter: drop-shadow(0 calc(var(--u) * .35) 0 var(--k)); }
 .iw-mode__zone svg { width: 100%; height: 100%; }
 .iw-mode--zones.is-focus .iw-mode__zone { animation: iw-mode-bob 1.2s ease-in-out infinite .25s; }
+
+/* ==================================================================================================
+   Touch controls (phones / tablets) — src/core/touch.js builds #touch-root; main.js shows it only
+   during live play. Everything is semi-transparent so the stage stays readable under the thumbs.
+   ================================================================================================== */
+#touch-root { position: fixed; inset: 0; z-index: 15; pointer-events: none; display: none;
+  font-family: 'Rubik', system-ui, sans-serif; -webkit-user-select: none; user-select: none;
+  -webkit-touch-callout: none; }
+#touch-root.is-on { display: block; }
+#touch-root .tw-aim { position: absolute; inset: 0; pointer-events: auto; touch-action: none; }
+#touch-root .tw-zone { position: absolute; left: 0; bottom: 0; width: 44%; height: 66%;
+  pointer-events: auto; touch-action: none; }
+.tw-stick { position: absolute; width: 128px; height: 128px; margin: -64px 0 0 -64px; opacity: 0;
+  transition: opacity .15s ease; pointer-events: none; }
+.tw-stick.is-on { opacity: 1; }
+.tw-stick__ring { position: absolute; inset: 0; border-radius: 50%; border: 2px solid rgba(255, 255, 255, .38);
+  background: rgba(13, 16, 32, .3); box-shadow: inset 0 0 18px rgba(0, 0, 0, .35); }
+.tw-stick__knob { position: absolute; left: 50%; top: 50%; width: 58px; height: 58px; border-radius: 50%;
+  transform: translate(-50%, -50%); background: rgba(255, 255, 255, .5);
+  box-shadow: 0 2px 10px rgba(0, 0, 0, .4), inset 0 -3px 0 rgba(0, 0, 0, .18); }
+.tw-btn { position: absolute; display: flex; align-items: center; justify-content: center;
+  pointer-events: auto; touch-action: none; border-radius: 50%;
+  background: rgba(13, 16, 32, .44); border: 2px solid rgba(255, 255, 255, .45);
+  color: #fff; font-weight: 800; letter-spacing: .06em; text-shadow: 0 1px 2px rgba(0, 0, 0, .5);
+  box-shadow: 0 3px 12px rgba(0, 0, 0, .35), inset 0 -3px 0 rgba(0, 0, 0, .22);
+  transition: transform .08s ease, background .08s ease; }
+.tw-btn.is-down { background: rgba(255, 138, 20, .55); border-color: #ffb063; transform: scale(.92); }
+/* Sizes scale with vmin and positions are viewport percentages, so the cluster stays clear of the
+   HUD and of itself from a 480×270 embedded view up to a tablet in portrait. */
+.tw-btn { font-size: clamp(10px, 3.1vmin, 16px); }
+.tw-btn--fire    { right: calc(2% + env(safe-area-inset-right));  bottom: calc(20% + env(safe-area-inset-bottom)); width: clamp(58px, 17vmin, 92px); height: clamp(58px, 17vmin, 92px); font-size: clamp(12px, 3.6vmin, 17px); }
+.tw-btn--jump    { right: calc(20% + env(safe-area-inset-right)); bottom: calc(38% + env(safe-area-inset-bottom)); width: clamp(46px, 13vmin, 70px); height: clamp(46px, 13vmin, 70px); }
+.tw-btn--squid   { right: calc(20% + env(safe-area-inset-right)); bottom: calc(6% + env(safe-area-inset-bottom));  width: clamp(46px, 13vmin, 70px); height: clamp(46px, 13vmin, 70px); }
+.tw-btn--sub     { right: calc(3% + env(safe-area-inset-right));  bottom: calc(50% + env(safe-area-inset-bottom)); width: clamp(40px, 11vmin, 58px); height: clamp(40px, 11vmin, 58px); }
+.tw-btn--special { right: calc(20% + env(safe-area-inset-right)); bottom: calc(64% + env(safe-area-inset-bottom)); width: clamp(40px, 11vmin, 58px); height: clamp(40px, 11vmin, 58px); }
+.tw-btn--cheer   { right: calc(36% + env(safe-area-inset-right)); bottom: calc(30% + env(safe-area-inset-bottom)); width: clamp(32px, 9vmin, 52px);  height: clamp(32px, 9vmin, 52px); }
+.tw-btn--map     { right: calc(20% + env(safe-area-inset-right)); top: calc(3% + env(safe-area-inset-top));       width: clamp(34px, 9vmin, 54px);  height: clamp(34px, 9vmin, 54px); }
+.tw-btn--pause   { right: calc(2% + env(safe-area-inset-right));  top: calc(3% + env(safe-area-inset-top));       width: clamp(30px, 8vmin, 44px);  height: clamp(30px, 8vmin, 44px); }
+
+/* ---- compact HUD on small screens: keep every counter readable without shrinking gameplay view ---- */
+@media (max-width: 920px) {
+  .iw-prompt { font-size: 13px; max-width: 62vw; }
+  .iw-fps { font-size: 10px; }
+  .iw-map__frame { scale: .8; transform-origin: top right; }
+}
+@media (max-width: 700px) {
+  .iw-map__frame { scale: .66; }
+  .iw-spl__card, .iw-kcard__w { scale: .82; }
+}

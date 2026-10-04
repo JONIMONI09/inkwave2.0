@@ -171,10 +171,12 @@ export class Renderer {
     if (this.bloom) this.bloom.enabled = !!(this.q.bloom && settings.bloom);
   }
 
-  // Lowest dynamic scale: never below 0.75 of CSS-pixel density, so Retina screens (preset density > 1) can give more back.
+  // Lowest dynamic scale: never below 0.75 of CSS-pixel density (0.6 on the potato preset, where weak
+  // mobile GPUs need every bit of headroom — extra blur is the lesser evil next to single-digit fps).
   dynFloor() {
     const base = Math.min(window.devicePixelRatio || 1, this.q.pixelRatio);
-    return Math.max(0.5, Math.min(0.75, 0.75 / base));
+    const min = this.q === QUALITY.potato ? 0.6 : 0.75;
+    return Math.max(0.5, Math.min(min, min / base));
   }
 
   // Dynamic resolution (never on ultra): scale the render density between dynFloor() and 1 of the quality preset.

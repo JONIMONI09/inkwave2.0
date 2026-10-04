@@ -7,6 +7,7 @@
   "scripts": {
     "start": "electron .",
     "serve": "python3 tools/serve.py 8490",
+    "serve:preview": "python3 tools/serve.py \"${PORT:-8490}\"",
     "check": "for f in $(find src electron build tools server/src -name '*.js' -o -name '*.mjs' -o -name '*.cjs'); do node --check \"$f\" || exit 1; done && echo 'syntax ok'",
     "package": "electron-packager . INKWAVE --platform=darwin --arch=arm64,x64 --icon=build/icon.icns --app-bundle-id=local.inkwave.game --app-category-type=public.app-category.action-games --extend-info=build/extend-info.plist --darwin-dark-mode-support --asar.unpackDir=songs --out=dist --overwrite --ignore='^/(dist|build|node_modules|docs|tools|server|\\.botlab)(/|$)' --ignore='\\.DS_Store$'",
     "music": "node build/music-manifest.mjs",

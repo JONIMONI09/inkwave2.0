@@ -46,19 +46,26 @@
 
 ## Controls
 
-| Action | Keyboard / mouse | Gamepad |
-|---|---|---|
-| Move | <kbd>W</kbd> <kbd>A</kbd> <kbd>S</kbd> <kbd>D</kbd> | Left stick |
-| Aim | Mouse | Right stick |
-| Fire | Left click | RT |
-| Squid form | <kbd>Shift</kbd> | LT |
-| Jump / dodge roll | <kbd>Space</kbd> | A |
-| Sub weapon (bomb) | Right click / <kbd>E</kbd> | RB |
-| Special | <kbd>F</kbd> | Y |
-| Map + Super Jump | Hold <kbd>Tab</kbd> or <kbd>M</kbd>, then <kbd>1</kbd>–<kbd>4</kbd> or click a pin | View |
-| Pause | <kbd>Esc</kbd> | Start |
+| Action | Keyboard / mouse | Gamepad | Touch |
+|---|---|---|---|
+| Move | <kbd>W</kbd> <kbd>A</kbd> <kbd>S</kbd> <kbd>D</kbd> | Left stick | Left stick (left thumb) |
+| Aim | Mouse | Right stick | Drag anywhere on the right half |
+| Fire | Left click | RT | Hold **FIRE** |
+| Squid form | <kbd>Shift</kbd> | LT | Hold **SQUID** |
+| Jump / dodge roll | <kbd>Space</kbd> | A | **JUMP** |
+| Sub weapon (bomb) | Right click / <kbd>E</kbd> | RB | **SUB** |
+| Special | <kbd>F</kbd> | Y | **SP** |
+| Map + Super Jump | Hold <kbd>Tab</kbd> or <kbd>M</kbd>, then <kbd>1</kbd>–<kbd>4</kbd> or click a pin | View | Hold **MAP**, tap a pin |
+| Cheer | <kbd>C</kbd> | D-pad up | **C** |
+| Pause | <kbd>Esc</kbd> | Start | **II** (top right) |
 
 Gamepads work on the hosted (https) version. On a plain `http://` LAN address browsers block the Gamepad API.
+
+**Phones and tablets.** On a touch device the match shows on-screen controls: a movement stick that
+spawns wherever your left thumb lands, drag-to-look on the right half of the screen, and hold-to-fire
+buttons. Everything feeds the same input pipeline as the keyboard/gamepad, so all weapons, specials
+and Super Jumps work the same way. Open the URL with `?no-touch` to hide the layer on a
+touch-screen laptop.
 
 ## Playing online
 
@@ -121,7 +128,14 @@ Rendering is three.js r186 (vendored, plain ES modules with an import map) with 
 
 ## Browser support
 
-Chrome and Edge are the target; Firefox works. Safari runs but is slower. A discrete or recent integrated GPU is recommended for the High preset; the settings menu has Medium and Low tiers.
+Chrome and Edge are the target; Firefox works. Safari runs but is slower. A discrete or recent integrated GPU is recommended for the High preset; the settings menu has Medium, Low and Lite tiers.
+
+**Performance on phones and weak GPUs.** On a touch device the first launch picks the **Lite**
+preset automatically: render density well below CSS-pixel resolution (the single biggest lever on
+mobile GPUs), shadows, bloom, AO and MSAA off, and a lighter particle load. On top of that, dynamic
+resolution keeps monitoring frame times during a match and steps the density down as far as needed
+(further on Lite than on the other tiers), so even a budget Android stays playable. Check the FPS
+counter in Settings → Graphics if you want to tune it further.
 
 ## Contributing
 

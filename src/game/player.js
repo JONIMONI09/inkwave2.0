@@ -104,6 +104,7 @@ export class PlayerController {
     if (inp.down('KeyA') || inp.down('ArrowLeft')) mx -= 1;
     if (inp.down('KeyD') || inp.down('ArrowRight')) mx += 1;
     if (inp.pad) { inp.padStick(0, 1, _stick, 0.14, 0.95); mx += _stick.x; mz -= _stick.y; }
+    if (inp.moveAxis) { mx += inp.moveAxis.x; mz += inp.moveAxis.y; }   // touch stick (core/touch.js)
     const ml = Math.hypot(mx, mz);
     if (ml > 1) { mx /= ml; mz /= ml; }
     // tracking assist: carry a share of the target's angular motion while the player is engaging (look or move input)

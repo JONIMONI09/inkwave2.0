@@ -584,6 +584,10 @@ export const DEFAULT_SETTINGS = {
 // Quality presets consumed by the renderer + fx.
 export const QUALITY = {
   // pixelRatio = cap on devicePixelRatio (Retina screens render at up to this density)
+  // potato: phones / tablets (and anything with an integrated GPU struggling even on low). Render
+  // density is capped well below CSS pixels — on mobile GPUs that is by far the biggest lever —
+  // with shadows, bloom, AO and MSAA off and a light particle load.
+  potato: { pixelRatio: 0.7,  shadowSize: 512,  msaa: 0, bloom: false, ao: false, paintAtlas: 2048, particles: 0.3 },
   low:    { pixelRatio: 0.75, shadowSize: 1024, msaa: 0, bloom: false, ao: false, paintAtlas: 2048, particles: 0.4 },
   medium: { pixelRatio: 1.0,  shadowSize: 2048, msaa: 2, bloom: true,  ao: false, paintAtlas: 2048, particles: 0.7 },
   high:   { pixelRatio: 1.5,  shadowSize: 4096, msaa: 4, bloom: true,  ao: true,  paintAtlas: 4096, particles: 1.0 },
