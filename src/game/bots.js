@@ -9,6 +9,7 @@ import { G, clamp, angleDiff } from '../core/ctx.js';
 import { PLAYER, DIFFICULTY, SUB, SPECIALS, weaponRange } from '../config.js';
 import { Hit } from './physics.js';
 import { MAIN_KITS, SUB_KITS } from './kits/registry.js';
+import { Perf } from '../core/perf.js';
 
 const _v = new THREE.Vector3(), _v2 = new THREE.Vector3(), _v3 = new THREE.Vector3();
 const _walkHit = new Hit();
@@ -58,11 +59,10 @@ const _wander = (x) => Math.sin(x) * 0.6 + Math.sin(x * 2.27 + 1.3) * 0.4;
 const _plans = new WeakMap();
 export function zonePlan() {
   const m = G.match, Z = m && m.zones;
-  if (!Z || m.attract || m.practice || !G.nav || !G.paint) return null;
-  let P = _plans.get(Z);
-  if (!P) { P = new ZonePlan(Z); _plans.set(Z, P); }
-  P.tick();
-  return P;
+  if (!Z || m.attract || m.practice || !G.nav || !G.paint) return null;    let P = _plans.get(Z);
+    if (!P) { P = new ZonePlan(Z); _plans.set(Z, P); }
+    Perf.spot('zonePlan', () => P.tick());   // work-plan §2: is the shared team plan ever a hitch source?
+    return P;
 }
 
 class ZonePlan {
@@ -1663,7 +1663,7 @@ export class BotBrain {
     const g = nav.nearest(pos, maxUp);
     this.repath = 0.8 + Math.random() * 0.4;
     if (s < 0 || g < 0) { this.path = null; return false; }
-    const p = nav.path(s, g, this.a.team, undefined, this.t < this.noClimbUntil);
+    const p = Perf.spot('nav.path', () => nav.path(s, g, this.a.team, undefined, this.t < this.noClimbUntil));   // A* spot-timed
     if (!p) { this.path = null; return false; }
     this.path = p; this.pi = Math.min(1, p.length - 1); this.goal = g; this.bestD = Infinity; this.noProg = 0;
     return true;

@@ -294,6 +294,8 @@ export class Menus {
   setLoading(p, label) {
     this._loading.target = clamp(+p || 0, 0, 1);
     if (label != null) this._loading.label = String(label);
+    // a fresh loading session (boot, match gate) must not resume the bar at its old shown value
+    if (this.current !== 'loading') this._loading.shown = Math.min(this._loading.shown, this._loading.target);
     if (this.current === 'loading' && this._scr && this._scr.setLabel) this._scr.setLabel(this._loading.label);
   }
 
@@ -828,6 +830,7 @@ export class Menus {
   // ================================================================ SCREEN: loading
   _scr_loading() {
     const fill = h('div', { class: 'iw-progress__fill' }, h('i', { class: 'iw-progress__wave' }), h('i', { class: 'iw-progress__edge' }));
+    const squid = h('i', { class: 'iw-progress__squid', html: GLYPHS.squidlet });   // swims along the fill edge
     const pctEl = h('span', { class: 'iw-progress__pct' }, '0%');
     const label = h('div', { class: 'iw-loading__label' }, this._loading.label);
     const tipText = h('div', { class: 'iw-tip__text' });
@@ -836,7 +839,7 @@ export class Menus {
     const el = h('div', { class: 'iw-screen iw-loading' }, blobs,
       h('div', { class: 'iw-loading__center' },
         h('div', { class: 'iw-in iw-in--pop', html: logoMarkup(GAME_TITLE, GAME_SUBTITLE, 'md') }),
-        h('div', { class: 'iw-progress iw-in iw-in--up' }, h('div', { class: 'iw-progress__track' }, fill), pctEl),
+        h('div', { class: 'iw-progress iw-in iw-in--up' }, h('div', { class: 'iw-progress__track' }, fill, squid), pctEl),
         h('div', { class: 'iw-in iw-in--up' }, label)),
       tip,
       h('div', { class: 'iw-corner iw-corner--br iw-in' }, `v${this._version()}`));
@@ -849,6 +852,8 @@ export class Menus {
       tick: (dt) => {
         const p = this._loading.shown;
         fill.style.transform = `translateX(${(-100 + p * 100).toFixed(2)}%)`;
+        squid.style.left = `${(2.5 + p * 95).toFixed(2)}%`;   // ride the fill, nudged in so it never clips
+        if (p >= 0.999) el.classList.add('is-done');   // 100 % / GO: bar and squid pop, pct turns team-colour
         const pr = Math.round(p * 100);
         if (pr !== lastPct) { pctEl.textContent = pr + '%'; lastPct = pr; }
         tipT += dt;

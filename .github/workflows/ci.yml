@@ -51,12 +51,21 @@ jobs:
           echo "path=$(head -1 chrome-path.txt | awk '{print $2}')" >> "$GITHUB_OUTPUT"
       - name: Boot the game and autopilot a match
         timeout-minutes: 8
+        env:
+          CHROME: ${{ steps.chrome.outputs.path }}
+          # the CI image runs as root: Chrome for Testing refuses to start its sandbox there
+          # ("No usable sandbox") — pass the flag through to tools/play.mjs. Local runs keep
+          # their sandbox (play.mjs only reads CHROME_ARGS when it is set).
+          CHROME_ARGS: --no-sandbox
+          # UNTIL_MS: software WebGL boots slower than a real GPU; the smoke still fails on any
+          # console error, page error, or a game that never reaches "playing"
+          UNTIL_MS: 300000
+          SMOKE_W: 640
+          SMOKE_H: 360
         run: |
           python3 tools/serve.py 8490 &
           for i in $(seq 1 30); do curl -sf http://localhost:8490/ >/dev/null && break; sleep 1; done
-          # UNTIL_MS: software WebGL boots slower than a real GPU; the smoke still fails on any
-          # console error, page error, or a game that never reaches "playing"
-          CHROME="${{ steps.chrome.outputs.path }}" UNTIL_MS=300000 SMOKE_W=640 SMOKE_H=360 npm run smoke
+          npm run smoke
 
   deploy-pages:
     name: Deploy to GitHub Pages
