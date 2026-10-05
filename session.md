@@ -5,6 +5,47 @@ progresses; keep the completed list factual and the remaining list actionable.
 
 Last updated: 2026-10-05
 
+### UI bug fixes: Esc loop in pushed sub-screens and a stuck judge hand-off (2026-10-05, branch `fix/hud-timing-spawn-protection`)
+Both bugs were user-reported with screenshots. Base still `a3309cf`; two files changed plus one new test suite.
+
+**Esc loop (confirmed, E-005 — a regression from the profiles/touch-editor work).** Settings → Touch → Touch
+layout editor, then Esc: the editor's `onBack` (and the profiles screen's) called `_go('settings', {back:true})`.
+`_go` always *pushes*, so the stack became `[main, settings, touchedit, settings]`; the next Esc popped
+`stack[len-2]` = `touchedit` — back into the editor. Esc therefore cycled editor ↔ Settings forever, exactly as
+reported. Fix: new `Menus._popTo(name)` helper — if `stack[len-2] === name` it uses `show(name, {pop:true,back:true})`
+(and so removes the editor from the stack), otherwise it falls back to the push, which is correct for screens the
+engine opens directly (no Settings underneath). Used by the touchedit `onBack` + DONE button and the profiles
+`onBack`. Forward navigation via `_go` is untouched — only the way *back* changed.
+
+**Results stuck (confirmed, E-006 — a latent bug, not new).** `_judge()` awaited the HUD judge animation with
+`await (judgeP || new Promise(r => setTimeout(r, 4000)))`. A Promise is **always truthy**, so that fallback was
+dead code: if the judge's rAF loop ever stalls (HUD paused, tab throttling, a fx callback throwing — the judge
+card is driven by the HUD's own `_fxLoop` on `_fxTime`, `src/ui/hud.js` `_fxLoop`), nothing advances the match
+and the player stares at the judge card forever. Fix: `Promise.race([judgeP.catch(()=>{}), setTimeout 9000])` —
+`JUDGE_MAX_MS` = 9000 s ceiling sits above the animation's own drumroll/reveal end (~3.45 s + reveal) so a healthy
+judge still wins the race and controls its own pacing; a stalled one no longer strands the round.
+
+**Regression tests (new `test/menu-back.test.mjs`, 7 tests).** The stack push/pop semantics of `show()`/`_back()`
+are reproduced verbatim, so the loop is *demonstrated* (old behaviour cycles; pop escapes); the source is asserted
+to contain `_popTo` and no remaining `_go('settings', {back:true})`; the judge race and the removal of the truthy
+`judgeP ||` fallback are asserted on `src/main.js` source, including a runtime proof that a never-resolving promise
+raced against a timeout does not block. Wired into `npm test` (suite 10).
+
+**Checks run (exact results).** `npm run check` → `syntax ok`; `npm test` → **92 passed, 0 failed** across 10
+suites (previous 85 + menu-back 7). `npm run check-maps` and `npm run music` not re-run — no map, audio or
+package-config-for-those-scripts changes.
+
+**Not verified on a device.** The screenshots show both screens render correctly (VICTORY results with coverage
+bar; judge card with LEMON WINS), so this is a logic fix on top of working rendering — but the actual Esc dance
+and the judge hand-off still need one real playthrough, which headless boot cannot complete inside the command
+cap. Remaining risk: the Firefox console warnings in the screenshot are benign (TitanOne glyph bbox,
+`WEBGL_debug_renderer_info` deprecation, `longtask` unsupported — all already caught); the
+`getInternalformatParameter: 'pname' must be SAMPLES` warning comes from `gpu-caps.js` probing
+TEXTURE_FILTERABLE/RENDERABLE pnames, works but is noisy — switching to try/catch-only probing is available on
+request if console silence matters.
+
+---
+
 ### Repository setup, HUD timing and spawn protection (2026-10-05, branch `fix/hud-timing-spawn-protection`)
 Base: `c2cd438` (clean tree at start; nothing pre-existing was discarded). Four commits: `b68f2ee`,
 `2f602d0`, `32cfa71`, `6194fc7`.

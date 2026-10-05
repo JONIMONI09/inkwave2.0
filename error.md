@@ -5,6 +5,74 @@ keep the format below. Update alongside `session.md`.
 
 ---
 
+## E-006 · Results screen never appears: dead `judgeP ||` fallback in `_judge()`
+
+**Status:** resolved (2026-10-05)
+
+### What happens
+After the match's final whistle the judge card shows, but the results screen never arrives — the round is stuck
+on the judge overlay (user report: "ergebnisanzeige bleibt stuck", with a screenshot of the judge card rendering
+correctly, so the failure is in the hand-off, not the rendering).
+
+### Root cause — confirmed
+`src/main.js _judge()` awaited the HUD judge animation as
+`await (judgeP || new Promise((r) => setTimeout(r, 4000)))`. `judgeP` is a Promise, and a Promise is **always
+truthy** — so the `||` fallback was dead code from the day it was written. The judge animation resolves itself
+from the HUD's *own* rAF loop (`_fxLoop` on `_fxTime`, `src/ui/hud.js`), which respects `hud.paused` and dies with
+tab throttling or a thrown fx callback. When that loop stalls, nothing else advances the match: the player is
+locked on the judge card with no path to the results.
+
+### Solution path
+`const JUDGE_MAX_MS = 9000; if (judgeP) await Promise.race([judgeP.catch(() => {}), new Promise((r) =>
+setTimeout(r, JUDGE_MAX_MS))]);` — the ceiling sits well above the animation's own end (~3.45 s drumroll + reveal),
+so a healthy judge still controls the pacing; a stalled one can no longer strand the round. A swallowed judge
+rejection (`catch`) also cannot block the hand-off.
+
+### Verification
+`node test/menu-back.test.mjs` asserts the race on the source, that the truthy fallback is gone, and proves at
+runtime that a never-resolving promise raced against a timeout does not block. `npm test` → 92 passed, 0 failed.
+Not yet seen in a browser (headless boot exceeds the command cap).
+
+### Prevention
+Never write `promise || fallback` — every object is truthy, so the fallback can never fire. Use `Promise.race`
+with an explicit ceiling for any await whose resolution depends on a render loop you do not own.
+
+---
+
+## E-005 · Esc cycles forever between Settings and the touch editor (push-instead-of-pop on Back)
+
+**Status:** resolved (2026-10-05)
+
+### What happens
+Settings → Touch → Touch layout editor, then Esc: the editor closes, Settings shows, Esc again — and the editor
+comes back. Esc keeps alternating between Settings and the editor instead of leaving to the main menu (user
+report: "lande ich in einem Loop").
+
+### Root cause — confirmed (own regression, introduced with the profiles/touch-editor screens)
+The touchedit `onBack`, its DONE button and the profiles `onBack` called `_go('settings', { back: true })`.
+`_go` always *pushes* (`show()`'s stack rule: `opts.push && name` → push; the `back: true` flag does not change
+that). The stack became `[main, settings, touchedit, settings]`, and `_back()` pops to `stack[len-2]` — which is
+now `touchedit`. Each Esc therefore pushed another Settings onto the stack and the next Esc re-entered the editor.
+
+### Solution path
+New `Menus._popTo(name)` helper: if `stack[len-2] === name`, use `show(name, { pop: true, back: true })` — the
+editor leaves the stack and Esc from Settings then pops to `main`; otherwise fall back to
+`_go(name, { back: true })`, which stays correct for screens the engine opens directly with no Settings
+underneath. All three call sites now go through `_popTo('settings')`. Forward navigation (`_go` pushes) is
+untouched.
+
+### Verification
+`test/menu-back.test.mjs` reproduces `show()`/`_back()`'s stack semantics verbatim: the old push-on-back cycle is
+demonstrated (Esc from Settings lands back in the editor), the pop variant escapes, and the source is asserted to
+contain no remaining `_go('settings', { back: true })`. `npm run check` → `syntax ok`; `npm test` → 92 passed,
+0 failed. Not yet exercised on a device.
+
+### Prevention
+A handler that *leaves* a screen must pop, not push: adding new sub-screens means auditing every `onBack` for
+push-vs-pop. The regression test encodes the stack arithmetic so this class of bug cannot return silently.
+
+---
+
 ## E-004 · `self._saveProfile()` written into class methods where `self` is not in scope
 
 **Status:** resolved (2026-10-05)
