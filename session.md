@@ -3,7 +3,7 @@
 A living log of the work done on this fork and what is still open. Update this file as work
 progresses; keep the completed list factual and the remaining list actionable.
 
-Last updated: 2026-10-04
+Last updated: 2026-10-05
 
 ---
 
@@ -82,15 +82,58 @@ Last updated: 2026-10-04
   landscape screens).
 - Preview serving confirmed (HTTP 200 for index, touch.js, ui.css).
 
+### CI failure fixes + P0–P3 audit (2026-10-05)
+Findings are labelled per the verify-before-change policy.
+
+- **P0 baseline (confirmed, evidence from CI + local runs):** The first CI run failed two jobs.
+  `checks` failed in `build/check-maps.mjs` (a ramp-angle assertion on the `halyard` map);
+  `deploy-pages` failed because `tools/verify-perf.mjs` (an ad-hoc script) was picked up and broke
+  the build. No on-device baseline exists — no Android device is attached to this environment;
+  see Remaining tasks. `localStorage`-persistence of settings was reviewed in code (saved settings
+  are never overridden by the mobile default).
+- **P0 fix (confirmed):** `src/world/maps.js` — the turf-variant tug ramp of `halyard` was still
+  25.7° (rise 2.6 / run 5.4) while its zones variant had already been softened to 23.8°. Brought
+  the turf ramp to the same 23.8° geometry (run 5.9). `npm run check-maps` green before/after
+  (fails before, passes after).
+- **P0 hygiene fix (confirmed):** removed the stray `tools/verify-perf.mjs`; `npm run build`
+  produces a clean `dist/` (index.html + assets verified).
+- **P1 portrait mode-select overflow (confirmed, code-level geometry):** the Turf/Zones/Boss
+  mode-select cards (3 × 37u) exceed the viewport in portrait (428 px on a 390 px phone).
+  `styles/ui.css` now caps the row/card sizes under `@media (orientation: portrait)`; numeric
+  check: 2-card row + boss card fit at 360/390/430 px widths.
+- **P1 renderer/touch rotation handling (confirmed sound, no change):** `renderer.resize()` polls
+  `innerWidth/innerHeight` every frame inside `render()` — dimensions are read after they have
+  settled, so rotation cannot strand stale sizes; HUD canvas listens to `resize`; touch buttons
+  are CSS-sized (`vmin`) + safe-area inset positioned with no JS-cached dimensions. Desktop and
+  gamepad input untouched.
+- **P2 mobile render-target format (plausible — reasoned from code, not measured on device):**
+  `src/core/renderer.js` now selects an 8-bit render target for the postprocessing chain on the
+  potato preset (HalfFloat elsewhere). Rationale: on weak mobile GPUs the fullscreen HalfFloat
+  target is a real bandwidth cost, and the grading pass output is screen-space LDR. Not verified
+  against a physical device — revisit if banding is reported.
+- **P3 night-light compounding bug (confirmed and fixed):** `_applyNight()` mutated
+  `decor.bulbMat.emissiveIntensity` in place (`*= 1 + 3.2*k`) and is re-run on every stage
+  rebuild/theme switch, so the intensity compounded (reported as ×10 brightening; the formula
+  projects ×1.5M after 10 calls). `src/main.js` now derives the value from the stored 0.9
+  baseline: `emissiveIntensity = 0.9 * (1 + 3.2 * k)` — idempotent by construction.
+  Regression test: repeated-call simulation passes (old: compounds, new: stable at 0.9/1.62/2.34/3.78
+  for k = 0/0.25/0.5/1). In-browser test attempt blocked by this container (boot > 165 s under
+  CPU contention); the game itself boots error-free in headless Chrome (verified repeatedly).
+- **All checks green after the pass:** `npm run check`, `npm run check-maps`, `npm run music`.
+
 ---
 
 ## Remaining tasks
 
 - **Lighthouse audit** — run a Lighthouse pass on the hosted build (performance, PWA-ish basics,
   accessibility of the menus) and fix what it reports.
-- **Real-device testing** — confirm the Lite preset's FPS gain on physical Android hardware
-  (headless/SwiftShader numbers do not transfer); re-test after any renderer change (see E-001).
+- **Real-device testing (blocks P1/P2 acceptance)** — the briefing's device acceptance criteria
+  (rotate portrait→landscape→portrait without clipping; sustained 30 FPS) can only be verified on
+  the affected Android phone/WebView. Needed: model, Android + Chrome/WebView version, DPR,
+  `localStorage["inkwave.settings"]` state, and frame-time captures before/after. All P2 claims
+  here are code-level only; do not treat them as device-verified.
 - **First CI run** — GitHub Pages must be enabled once in the repo settings (Source: GitHub Actions)
   before the `deploy-pages` job can publish; the first smoke run on a real runner should be watched
   in case the software-WebGL boot needs a larger `UNTIL_MS`.
-- (Optional) touch sensitivity setting; fill `error.md` with further entries as issues surface.
+- (Optional) touch sensitivity setting; fill `error.md` with further entries as issues surface;
+  watch for banding complaints that would question the 8-bit render-target choice on Lite.

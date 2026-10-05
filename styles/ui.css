@@ -2771,6 +2771,13 @@ circle.iw-ico-cut { fill: var(--cut, #fff); }
 .iw-modesel__row.is-three .iw-mode__splat { width: calc(var(--u) * 23); height: calc(var(--u) * 23); }
 .iw-modesel__row.is-three .iw-mode__squid { width: calc(var(--u) * 9.5); height: calc(var(--u) * 9.5); }
 .iw-modesel__row.is-three .iw-mode__tape .iw-display { font-size: calc(var(--u) * 3); }
+/* portrait / square screens: three cards at 30.5u each overflow the viewport — shrink them to fit
+   (37u would be even wider; the caps keep both the 3-card row and the single-card row inside width) */
+@media (max-aspect-ratio: 1 / 1) {
+  .iw-modesel__row { gap: calc(var(--u) * 1.6); }
+  .iw-modesel__row .iw-mode { width: min(calc(var(--u) * 37), 44vw); }
+  .iw-modesel__row.is-three .iw-mode { width: min(calc(var(--u) * 30.5), 30vw); }
+}
 .iw-mode--zones { --mc: #ffc233; --mc-rgb: 255, 194, 51; --mc-l: #ffe08a; --mc-d: #a8740a; --mc-ink: #3a2800; }
 .iw-mode--zones .iw-mode__tape .iw-display { color: #2a1d00; }
 .iw-mode__zone { display: block; width: calc(var(--u) * 8); height: calc(var(--u) * 8); color: #fff; filter: drop-shadow(0 calc(var(--u) * .35) 0 var(--k)); }

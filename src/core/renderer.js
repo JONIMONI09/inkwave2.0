@@ -118,7 +118,10 @@ export class Renderer {
     r.setSize(w, h);
     // effective MSAA sample count (also read by the showcase for its private target)
     this.samples = this.appleGPU ? 0 : q.msaa || 0;
-    const rt = new THREE.WebGLRenderTarget(w * pr, h * pr, { type: THREE.HalfFloatType, samples: this.samples });
+    // presets with bloom off never read HDR values back out of the target (grade/tonemap only), so
+    // they can run an 8-bit target: half the fill bandwidth — the dominant cost on weak mobile GPUs
+    const rtType = q.bloom ? THREE.HalfFloatType : THREE.UnsignedByteType;
+    const rt = new THREE.WebGLRenderTarget(w * pr, h * pr, { type: rtType, samples: this.samples });
     const comp = (this.composer = new EffectComposer(r, rt));
     comp.setPixelRatio(pr);
     comp.setSize(w, h);
