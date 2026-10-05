@@ -5,9 +5,9 @@ import { Renderer } from './core/renderer.js';
 import { Input } from './core/input.js';
 import { TouchControls, isTouchDevice } from './core/touch.js';
 import { loadLayout, saveLayout, activeOrientation } from './core/touch-layout.js';
-import { loadAccounts, saveAccounts, activeAccount, createAccount, deleteAccount, renameAccount, migrateProfile } from './core/profiles.js';
+import { loadAccounts, saveAccounts, activeAccount, createAccount, deleteAccount, renameAccount } from './core/profiles.js';
 import { mapTheme,
-  DEFAULT_SETTINGS, DEFAULT_PROFILE, QUALITY, TEAM_PALETTES, COLORBLIND_PALETTE, TEAM_NAMES, WEAPONS, WEAPON_ORDER, WEAPON_SUCCESSOR, ZONES, SUB, SUBS, SUB_ORDER, SPECIALS, SPECIAL_ORDER,
+  DEFAULT_SETTINGS, QUALITY, TEAM_PALETTES, COLORBLIND_PALETTE, TEAM_NAMES, WEAPONS, WEAPON_ORDER, WEAPON_SUCCESSOR, ZONES, SUB, SUBS, SUB_ORDER, SPECIALS, SPECIAL_ORDER,
   MAPS, DIFFICULTY, PLAYER, PROGRESSION, VERSION, MATCH, OFFLINE_MAPS, mapOfflineOk, mapNoBots, mapBossOk,
 } from './config.js';
 import { Level } from './world/level.js';
