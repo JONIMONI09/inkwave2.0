@@ -5,6 +5,40 @@ keep the format below. Update alongside `session.md`.
 
 ---
 
+## E-004 · `self._saveProfile()` written into class methods where `self` is not in scope
+
+**Status:** resolved (2026-10-05)
+
+### What happens
+A scripted replacement of the five `saveJSON('inkwave.profile', …)` call sites rewrote two of them — inside
+`_bossResults()` and `_judge()` — to `self._saveProfile()`. `const self = this` only exists inside `_menuApi()`
+and one other closure, so in those two methods `self` is undefined and the post-match XP save throws a
+`ReferenceError`. The game would still have won the match and then failed on the results screen.
+
+`node --check` reported `syntax ok`: an undefined identifier is a runtime error, not a syntax error.
+
+### Reproduction
+`grep -n "_saveProfile();" src/main.js` shows `self.` on the two lines inside the results methods. Compare with
+`grep -n "const self = this" src/main.js` (only inside `_menuApi`).
+
+### Root cause — confirmed
+The replacement matched on the argument text (`saveJSON('inkwave.profile', p)`) without checking which
+receiver was in scope at each of the two different call sites.
+
+### Solution path
+Corrected both to `this._saveProfile()` (they are class methods). Added a regression assertion in
+`test/profiles.test.mjs` that no `self._saveProfile()` appears after `_setSettings`, i.e. outside the menu API
+closure.
+
+### Verification
+`npm run check` → `syntax ok`; `node test/profiles.test.mjs` → 11 passed, 0 failed; `npm test` → 85 passed, 0 failed.
+
+### Prevention
+A scripted edit across several call sites must check the scope of every receiver it rewrites. A test that asserts
+"no `self.` outside the closure" catches the class of mistake, not just this instance.
+
+---
+
 ## E-002 · Duplicate lines introduced by a partially-applied edit in `src/game/actor.js`
 
 **Status:** resolved (2026-10-05)

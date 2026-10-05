@@ -57,20 +57,52 @@ depth, against 42–46 % for the other five. **Deaths shortly after spawning and
 NOT measured** — they are match outcomes, not layout facts, and need a live match this environment cannot
 complete. Per the brief, no spawn location was moved. Waiting on the user to pick an option.
 
+**Cheer Orb rework (complete, after the user's clarification).** The user answered the two open questions: keep
+the ball mechanic, add a lift-off where you rise slowly, hover (no free flight), can still turn and throw; and
+the shield should be tough but breakable, with "Yeah!" making it stronger and stronger. Implemented in
+`src/game/specials.js` + a new `CHEER_ORB` block in `src/config.js`:
+- `speed: 0` and **no read of `a.intent.move` at all**, with horizontal velocity damped on the rise and while
+  hovering — you literally cannot fly around; `aimFace` stays on so turning/aiming keeps working.
+- The rise ends at `CHEER_ORB.hoverHeight` above `G.level.groundHeight(...)`, so it works on any stage.
+- Shield: a pool (`shieldMax` 120) drained through the **existing `filterDamage` hook** — no new damage path.
+  Empty → `shield_pop` + pooled burst + `end(a, 'shield')`, which is the intended way back to normal.
+- Cheers: `_booyahCheer()` feeds BOTH charge and shield, reused from the existing teammate scan in `cheer(a)`,
+  capped at 260 so C-spam cannot make an unkillable orb. Slow regen (6/s) only up to the base pool.
+- Landing grants `invuln = max(invuln, 2.0)` — the **same** invulnerability the spawn dome uses, so the two
+  compose instead of stacking into something longer than either was meant to be.
+- Online: the shield pool rides in bits 6–15 of the ghost int that was already being sent, so no new packet and
+  the host stays authoritative. Remote actors never run `body()`, so the hover physics cannot desync a client.
+- The ball itself is untouched: charge 4.5 s, auto-throw, blast radius 8.4 all unchanged.
+
+**Local profiles (complete).** The user deferred the encrypted export and asked for a local profile in browser
+data only. New `src/core/profiles.js` + a *Settings → Optimize → Local profile* screen:
+- create / switch / rename / delete, everything in `localStorage`, nothing uploaded.
+- **Update safety, which was the actual requirement:** the record is versioned; `migrateProfile()` brings an older
+  one up field by field and clamps the numbers (a NaN level would otherwise poison the progression screen); the
+  pre-profiles `inkwave.profile` key is adopted on first run so nobody loses progress on upgrade; it is kept in
+  step on every write so an older build still finds a profile; a record from a **newer** build is left untouched
+  with a warning rather than half-applied; the last profile cannot be deleted.
+- `DEFAULT_PROFILE` moved from `main.js` into `config.js` so the live profile and the store cannot drift apart.
+
+**Optimize → Pre-warm on the menu (complete, with a correction to the brief's premise).** The brief said shader
+pre-loading "should already be implemented" — **it is not.** There is no Service Worker, no Cache API and no
+asset cache anywhere in the project; everything is procedural. What *does* exist is the warm-up machinery
+(`Character.warmAll`, `showcase._warmup`, `_warmCharacters`), and it currently runs at match start. So the setting
+moves that same work earlier into menu idle time instead of inventing a cache. `_idlePrewarm()` is best-effort,
+off-scene, gated on `settings.prewarm` and on `G.mode === 'menu'`.
+
 **Checks run (exact results).**
 - `npm run check` → `syntax ok`
-- `npm test` → 62 passed, 0 failed across 7 suites (scoring 13, results 7, swimsub 7, touch 5, compat 9,
-  hud-timing 7, spawn-protect 14)
+- `npm test` → **85 passed, 0 failed** across 9 suites (scoring 13, results 7, swimsub 7, touch 5, compat 9,
+  hud-timing 7, spawn-protect 14, cheer-orb 12, profiles 11)
 - `npm run measure:spawns` → table above
-- `npm run check-maps` / `npm run music` → not re-run this session (no map or audio files touched)
+- `npm run check-maps` → ok · `npm run music` → ok
 
 **Remaining / blocked.**
-- **Cheer Orb rework — blocked on a balance decision.** The charge→shield-strength mapping and the damage
-  scaling are balance-affecting and cannot be inferred from existing rules. Options presented to the user; no
-  code changed yet.
-- **Profile export / import + local accounts — blocked on a scope decision** (see the analysis in the report).
-- **Device/browser verification** for the HUD timing, the spawn dome and the Firefox path — still outstanding
-  from the previous session as well.
+- **Spawn-point change — awaiting the user's choice.** Evidence is in; nothing was moved.
+- **Encrypted profile export — deferred by the user** ("egal, dann lasse es erstmal"). Not started.
+- **Device/browser verification** — still outstanding for the HUD timing, the spawn dome, the Cheer Orb hover and
+  the Firefox path. None of it has been seen in a browser.
 
 ---
 
