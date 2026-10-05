@@ -5,6 +5,77 @@ progresses; keep the completed list factual and the remaining list actionable.
 
 Last updated: 2026-10-05
 
+### Repository setup, HUD timing and spawn protection (2026-10-05, branch `fix/hud-timing-spawn-protection`)
+Base: `c2cd438` (clean tree at start; nothing pre-existing was discarded). Four commits: `b68f2ee`,
+`2f602d0`, `32cfa71`, `6194fc7`.
+
+**Project instructions and skills (complete).**
+- `CLAUDE.md` (new): verified commands, verify-before-change, English/German-only, no `vendor/` edits,
+  respect for `docs/CONTRACTS.md`, session/error obligations, honest reporting. 118 lines.
+- `AGENTS.md` (new): a five-line pointer to `CLAUDE.md` — deliberately no duplicated content.
+- `.claude/skills/` (new, 6 skills, 32 KB total): `session-logging`, `error-triage`, `inkwave-verify`,
+  `gameplay-change-pr`, `touch-ui-change`, `performance-change`. Each has YAML frontmatter whose `name`
+  matches its folder (checked by script) and a description stating what it does and when to use it.
+- **Unverified:** Freebuff's actual skill discovery could not be exercised from this shell, so whether the
+  skills appear in slash autocomplete is **not confirmed**. The format follows `.claude/skills/<name>/SKILL.md`
+  with `name` + `description`; no platform-specific frontmatter (`disable-model-invocation`) was used, since
+  nothing in this environment confirms Freebuff supports it.
+
+**HUD timing (complete).** Three confirmed defects, all fixed in `src/main.js`:
+- *Confirmed:* `_intro()` revealed the HUD on a 3.0 s timer and the boss intro on 5.6 s, while the match only
+  reaches `playing` at `MATCH` 4.2 s / `BOSS_MODE.intro` 7.2 s (`src/boss/bossMode.js:9`) — the ink tank,
+  minimap and reticle were on screen 1.2–1.6 s **before GO** on every stage. Both timers are gone; the HUD now
+  comes up on the `match:state` `playing` edge, which is also where the GO banner fires (HUD first, so GO is
+  never hidden).
+- *Confirmed:* `_judge()` called `hud.setVisible(true)`, re-showing the gameplay HUD over the overview camera.
+  The judge card draws in `overLayer`, which `setVisible(false)` does not touch (`src/ui/hud.js:317`), so this
+  now hides. Touch controls also lost their `intro` and `finish` states.
+- *Confirmed:* the practice-loadout tuck in `_onScreen` could resurrect a HUD the intro/judge had hidden; a
+  single `_gameplayHudWanted()` helper now backs both decisions.
+- **Not verified in a browser.** The flow is timers plus an event-bus edge; headless boot does not complete
+  inside the command cap.
+
+**Spawn protection (complete).** Previously a flat `PLAYER.spawnInvuln` (1.6 s) armed at respawn, with no area.
+- New `SPAWN_PROTECT` block in `src/config.js` (radius, height, `leaveGrace: 3.0`, hp/ink regen, intercept flags).
+- `Actor.protected` is the single source of truth (`invuln > 0 || inSpawnZone || spawnGrace > 0`) and gates
+  `damage()`, enemy-ink damage and the rig's spawn shimmer. The grace timer is *pinned to full while inside*,
+  so re-entering re-arms it rather than stacking a second timer — this is what keeps protection coherent with
+  `PLAYER.spawnInvuln` instead of additive.
+- Hostile ink is consumed at the dome wall in `Projectiles._step`; bombs are disarmed in `_updateBombs` through
+  the existing removal path (mesh back, no detonation). Friendly ordnance untouched; the dome has a lid so an
+  arcing shot is not blocked by a wall it never touches.
+- New `src/game/spawn-protect.js` holds the geometry query, because `weapons.js` needs it and `actor.js`
+  already imports `weapons.js` — putting it in `actor.js` would have closed an import cycle.
+- Bots, remotes and the local player all run the same `Actor.update` path; online, the host remains the only
+  authority for damage (`damage()` is not driven on guests), so the rule stays host-deterministic.
+- **Not verified in a match** — dome visuals, the intercept feel and the audio rate-limit need a real session.
+
+**Spawn-point measurement (evidence gathered, nothing changed).** New `tools/measure-spawns.mjs`
+(`npm run measure:spawns`), static geometry per stage: pad→pad 80.4–87.2 m (mean 83.9), spawn→midline
+35.7–42.0 m (mean 39.4). Two outliers sit closer in: `kelpline` and `cargo` both at 35.7 m / 32 % of stage
+depth, against 42–46 % for the other five. **Deaths shortly after spawning and time to first contact were
+NOT measured** — they are match outcomes, not layout facts, and need a live match this environment cannot
+complete. Per the brief, no spawn location was moved. Waiting on the user to pick an option.
+
+**Checks run (exact results).**
+- `npm run check` → `syntax ok`
+- `npm test` → 62 passed, 0 failed across 7 suites (scoring 13, results 7, swimsub 7, touch 5, compat 9,
+  hud-timing 7, spawn-protect 14)
+- `npm run measure:spawns` → table above
+- `npm run check-maps` / `npm run music` → not re-run this session (no map or audio files touched)
+
+**Remaining / blocked.**
+- **Cheer Orb rework — blocked on a balance decision.** The charge→shield-strength mapping and the damage
+  scaling are balance-affecting and cannot be inferred from existing rules. Options presented to the user; no
+  code changed yet.
+- **Profile export / import + local accounts — blocked on a scope decision** (see the analysis in the report).
+- **Device/browser verification** for the HUD timing, the spawn dome and the Firefox path — still outstanding
+  from the previous session as well.
+
+---
+
+## Completed work
+
 ---
 
 ## Completed work

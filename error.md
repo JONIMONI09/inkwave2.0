@@ -5,6 +5,65 @@ keep the format below. Update alongside `session.md`.
 
 ---
 
+## E-002 · Duplicate lines introduced by a partially-applied edit in `src/game/actor.js`
+
+**Status:** resolved (2026-10-05)
+
+### What happens
+A multi-replacement patch tool call failed validation partway through and left three edits applied twice:
+the `spawnGrace` / `inSpawnZone` / `_shieldSndT` field block, the one-line reset in `reset()`, and the
+`this._updateSpawnProtect(dt)` call in `update()` each appeared twice in the file. `node --check` still passed
+(syntax is valid) — the damage was behavioural, not syntactic.
+
+### Reproduction
+Apply a multi-replacement patch whose later entries are malformed. Inspect `src/game/actor.js` around the
+constructor's `this.invuln = 0`, `reset()` and the `update()` timer block: each shows a duplicated line.
+
+### Root cause — confirmed
+The tool applied the valid replacements before rejecting the invalid ones, and nothing in the tool reports a
+partial application. Only visible by reading the file back.
+
+### Solution path
+Removed the duplicates by hand and re-verified by reading the affected regions. Going forward: after any
+failed multi-replacement call, grep the target for the inserted identifiers before continuing.
+
+### Verification
+`npm run check` → `syntax ok`; `npm test` → 62 passed, 0 failed.
+
+### Prevention
+Do not treat a failed edit call as "nothing happened". Grep for the inserted symbol and confirm it appears once.
+
+---
+
+## E-003 · Import cycle `actor.js` ↔ `weapons.js` when adding the spawn-shield query
+
+**Status:** resolved (2026-10-05)
+
+### What happens
+The spawn-protection geometry helper was first written at the bottom of `actor.js` and imported by
+`weapons.js`. But `actor.js` already imports `WeaponRunner` from `weapons.js`, so the two modules would import
+each other. `node --check` does not resolve imports and reports `syntax ok`.
+
+### Reproduction
+`grep '^import' src/game/actor.js` shows `from './weapons.js'`; adding `from './actor.js'` to weapons.js closes
+the cycle.
+
+### Root cause — confirmed
+Module ownership: the rule query is needed by both sides, so it cannot live in either one.
+
+### Solution path
+Moved `inSpawnDome` / `spawnShieldCross` into `src/game/spawn-protect.js`, which imports only `ctx.js` and
+`config.js`. Both `actor.js` and `weapons.js` import from it. A regression test asserts neither file imports the
+other and that the shared module imports neither.
+
+### Verification
+`node test/spawn-protect.test.mjs` → 14 passed, 0 failed; `npm run check` → `syntax ok`.
+
+### Prevention
+When a helper is needed by two modules that already depend on each other, it belongs in a third.
+
+---
+
 ## E-001 · Single-digit FPS on Android phones (performance bottleneck)
 
 **Status:** mitigated (2026-10-04) — see solution; re-test on real hardware.
