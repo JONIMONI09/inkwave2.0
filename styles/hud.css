@@ -772,6 +772,9 @@ body.iw-dio-on .iw-spl__tint { visibility: hidden; }
 /* ------------------------------------------------------------------ map diorama (src/ui/diorama.js)
    The 3D view itself is the real stage seen from above (CameraRig); this layer is the miniature finish + the pins. */
 .iw-dio { position: absolute; inset: 0; pointer-events: none; opacity: 0; display: none; --pinK: 0; }
+/* touch: a tap on the map picks the nearest jumpable pin (desktop clicks still come from the locked pointer) */
+.iw-dio__tap { position: absolute; inset: 0; pointer-events: none; touch-action: none; }
+.iw-dio.is-on.is-touch .iw-dio__tap { pointer-events: auto; }
 .iw-dio.is-on { display: block; }
 .iw-dio__tilt { position: absolute; left: 0; right: 0; -webkit-backdrop-filter: blur(6px) saturate(1.12); backdrop-filter: blur(6px) saturate(1.12); }
 .iw-dio__tilt--top { top: 0; height: 28%;

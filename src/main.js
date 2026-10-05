@@ -4,6 +4,7 @@ import { G, on, emit, clamp, damp } from './core/ctx.js';
 import { Renderer } from './core/renderer.js';
 import { Input } from './core/input.js';
 import { TouchControls, isTouchDevice } from './core/touch.js';
+import { loadLayout, saveLayout, activeOrientation } from './core/touch-layout.js';
 import { mapTheme,
   DEFAULT_SETTINGS, QUALITY, TEAM_PALETTES, COLORBLIND_PALETTE, TEAM_NAMES, WEAPONS, WEAPON_ORDER, WEAPON_SUCCESSOR, ZONES, SUB, SUBS, SUB_ORDER, SPECIALS, SPECIAL_ORDER,
   MAPS, DIFFICULTY, PLAYER, PROGRESSION, VERSION, MATCH, OFFLINE_MAPS, mapOfflineOk, mapNoBots, mapBossOk,
@@ -88,6 +89,8 @@ class Game {
     try { const { DioramaOverlay } = await import('./ui/diorama.js'); this.diorama = new DioramaOverlay(this.hud ? this.hud.el : this.uiRoot); } catch (e) { console.error('[inkwave] diorama', e); this.diorama = null; }
     this.hud?.setVisible(false);
     this.menus?.show('loading');
+    // the inline splash (index.html) has done its job the moment the real loading screen is on stage
+    if (typeof window !== 'undefined' && window.inkwaveBootDone) window.inkwaveBootDone();
     Log.install();   // uncaught errors / rejections leave a [inkwave:crash] trace
     this.bootMarks = [];
     const bootStep = Log.steps('boot');   // one line per boot step, with its duration
@@ -105,7 +108,8 @@ class Game {
     // touch devices (phones/tablets): on-screen controls instead of pointer lock + keyboard
     this.isTouch = isTouchDevice() && !params.has('no-touch');
     this.input.touchOnly = this.isTouch;
-    if (this.isTouch) this.touch = new TouchControls(this.input, { onPause: () => this._touchPause() });
+    if (this.isTouch) this.touch = new TouchControls(this.input, { onPause: () => this._touchPause() }).bindOrientation();
+    if (this.isTouch) this.touch.applyLayout();   // the player's saved touch layout (per orientation)
     this.input.onKey = (e, repeat) => this._onKey(e, repeat);
     this.input.onUnlock = () => this._onPointerUnlock();
     // after a focus steal while the map was held, the next click on the game takes the mouse back (no pause detour)
@@ -201,6 +205,7 @@ class Game {
     this.bootMs = Math.round(performance.now() - t0);
     Perf.init();
     Log.info('boot', `ready in ${(this.bootMs / 1000).toFixed(1)}s · quality ${this.settings.quality}${this.isTouch ? ' · touch' : ''}`);
+    Log.debug('boot', this.R.capsLine);   // what this driver reports, so a graphics bug report carries the reason
     Log.debug('boot', this.bootMarks.map(([l, t]) => `${l} @${t}ms`).join(' · '));
     window.__inkwave = this; // debug/audit hook
     window.__inkwave.perf = Perf; // work-plan §2 baseline: frame percentiles + spot timings
@@ -402,6 +407,11 @@ class Game {
       // online results: the host can take the room back to the lobby without waiting out the timer
       netBackToLobby: () => { if (G.netm && G.net?.isHost && self.match?.state === 'results') { clearTimeout(self._netEndT); G.netm.sendEnd(); self.netMatchEnd(); } },
       quitMatch: () => self.quitToMenu(),
+      // touch-layout editor (Settings → Touch layout): the menus own the record, the live layer re-applies it so the
+      // buttons move under the finger while you drag them
+      getTouchLayout: () => loadLayout(),
+      setTouchLayout: (rec) => { const norm = saveLayout(rec); self.touch?.applyLayout(norm); return norm; },
+      touchOrientation: () => activeOrientation(),
       rematch: () => self.startMatch(self.lastMatchOpts || {}),
       toMainMenu: () => self.quitToMenu(),
       onScreenChange: (s) => self._onScreen(s),
@@ -698,13 +708,13 @@ class Game {
     G.audio?.init?.();
     G.audio?.duck?.(1, 0.01);   // a new stage picked from the practice pause menu starts un-ducked
     this.input.requestLock();
-    // Loading gate: the themed loading screen stays up (instead of a black void) while the stage
-    // builds and shaders compile, holds through the intro fly-over and only gives way at the GO
-    // banner — so the first frames of play you actually see are already warm and spike-free.
+    // Match-start presentation: the camera-fade flow (commit 19dd9bd) is the default again — the screen fades out,
+    // the stage builds behind the fade, and the intro fly-over + GO banner play. Only real waiting gets an overlay:
+    // after 600 ms of measured preparation the themed loading screen steps in (no staged percentages, honest labels);
+    // shorter builds never show one, and a late-arriving < 250 ms busy blip gets the small corner spinner instead.
     const gate = (this._matchGate = { t0: performance.now(), map: opts.mapId, mode: opts.mode, done: false });
     gate.safety = setTimeout(() => this._gateDone(true), 22000);   // never trap the player if 'playing' never fires
-    this.menus?.show('loading');
-    this.menus?.setLoading(0.04, 'Raising the arena…');
+    gate.slow = setTimeout(() => { if (!gate.done) { this.menus?.show('loading'); this.menus?.setLoading(0.1, 'Raising the arena…'); } }, 600);
     await this._fade(1, 350);
     G.music?.stop?.(0.3); this._musicTrack = null;
     // start buffering this round's match song and the final-minute song while the world loads
@@ -722,6 +732,7 @@ class Game {
     if (opts.mode === 'boss' && !mapBossOk(map.id)) opts.mode = 'turf';
     await this._buildWorld(map, opts.mode);   // no-op when this stage (+ mode variant) is already built
     if (!gate.done) this.menus?.setLoading(0.45, 'Painting the turf…');
+    if (performance.now() - gate.t0 > 600 && !gate.done && this.menus?.current !== 'loading') this.menus?.showBusy();
     const theme = mapTheme(map, opts.time);
     this.time = opts.time === 'dusk' ? 'dusk' : 'day';
     if (theme !== this.theme) {
@@ -757,19 +768,22 @@ class Game {
     this._fade(0, 500);
   }
 
-  // Loading gate end: 100 % exactly when the match says GO, one beat on it, then the screen steps
-  // aside. `force` (the 22 s safety timeout) skips the fanfare and just closes.
+  // Loading gate end. Fast path (the default): the fade was the whole gate — hand everything back immediately and let
+  // the camera-fade / intro fly-over play. If the loading screen was shown (preparation took > 600 ms), it hands over
+  // at the GO banner. `force` (the 22 s safety timeout) just closes whatever is up.
   _gateDone(force = false) {
     const gate = this._matchGate;
     if (!gate || gate.done) return;
     gate.done = true;
     clearTimeout(gate.safety);
+    clearTimeout(gate.slow);
+    this.menus?.hideBusy();
     const finish = () => {
       if (this._matchGate !== gate) return;
       this._matchGate = null;
       if (this.menus?.current === 'loading') this.menus?.show(null);
     };
-    if (force) finish();
+    if (force || this.menus?.current !== 'loading') finish();
     else {
       this.menus?.setLoading(1, 'GO!');
       setTimeout(finish, 700);   // one beat on 100 % / GO!, then away
@@ -953,6 +967,7 @@ class Game {
   async quitToMenu(screen = 'main') {
     clearTimeout(this._netEndT);
     clearTimeout(this._matchGate?.safety);
+    clearTimeout(this._matchGate?.slow);
     if (G.net && G.net.state !== 'offline' && G.net.state !== 'error') G.net.leave();
     this.input.exitLock();
     this.menus?.show(null);
@@ -1048,7 +1063,7 @@ class Game {
     }
     const judgeP = zr
       ? this.hud?.judge({ mode: 'zones', colors: [G.teamHex[0], G.teamHex[1]], names: this.palette.names || TEAM_NAMES, counts: zr.counts, penalty: zr.penalty, winner: zr.winner, reason: zr.reason, overtime: zr.overtime, percents: [cov[0] * 100, cov[1] * 100] })
-      : this.hud?.judge({ colors: [G.teamHex[0], G.teamHex[1]], percents: [cov[0] * 100, cov[1] * 100], names: this.palette.names || TEAM_NAMES });
+      : this.hud?.judge({ colors: [G.teamHex[0], G.teamHex[1]], percents: [cov[0] * 100, cov[1] * 100], names: this.palette.names || TEAM_NAMES, winner: m.result.winner });
     await (judgeP || new Promise((r) => setTimeout(r, 4000)));
     const myTeam = m.local ? m.local.team : 0;
     const won = m.result.winner === myTeam;

@@ -86,6 +86,9 @@ export const PLAYER = {
   ledgePopClear: 0.42,    // apex this far above the ledge top when popping over it
   ledgePopCarry: 2.5,     // forward speed onto the ledge
   emergeDelay: 0.07,      // squid → kid before the first shot can leave the barrel (the shot is buffered, not lost)
+  // Sub thrown while swimming: the press requests emergence instead of being swallowed, and a quick tap keeps
+  // working for this long after the squid is out of the ink (the throw then runs the normal path exactly once).
+  subEmergeWindow: 0.4,
   fireBuffer: 0.16,
 };
 

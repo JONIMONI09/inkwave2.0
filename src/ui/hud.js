@@ -527,12 +527,20 @@ export class HUD {
     return this._judgeTurf(opts);
   }
 
-  _judgeTurf({ colors = ['#ff8a14', '#2f5bff'], percents = [50, 50], names = TEAM_NAMES } = {}) {
+  // Turf judging: each bar shows that team's ACTUAL coverage of all countable turf (they need not sum to 100 % —
+  // the middle stays neutral for unpainted ground), the numbers match, and the winner banner uses the authoritative
+  // result.winner (never inferred from rounded values — a +0.1 % tie-break stays a win, not a tie).
+  _judgeTurf({ colors = ['#ff8a14', '#2f5bff'], percents = [50, 50], names = TEAM_NAMES, winner: winArg } = {}) {
     return new Promise((resolve) => {
       const [pa, pb] = pct(percents[0], percents[1]);
+      const fin = (v) => (Number.isFinite(+v) ? Math.max(0, +v) : 0);
       const ca = toHex(colors[0], '#ff8a14'), cb = toHex(colors[1], '#2f5bff');
-      const share = pa + pb > 0 ? pa / (pa + pb) : 0.5;
-      const winner = Math.abs(pa - pb) < 0.05 ? -1 : pa > pb ? 0 : 1;
+      const fa = fin(pa), fb = fin(pb);
+      // bar fractions of the full track: each team's own coverage, clamped so both never overflow the middle
+      const over = fa + fb > 100 ? 100 / (fa + fb) : 1;
+      const ba = (fa * over) / 100, bb = (fb * over) / 100;
+      const share = fa + fb > 0 ? fa / (fa + fb) : 0.5;   // where the two fronts meet (clash mark only)
+      const winner = winArg === 0 || winArg === 1 ? winArg : fa === fb ? -1 : fa > fb ? 0 : 1;
       const numA = h('b', { class: 'iw-jd__num' }, '0.0%'), numB = h('b', { class: 'iw-jd__num' }, '0.0%');
       const barA = h('div', { class: 'iw-jd__bar a' });
       const barB = h('div', { class: 'iw-jd__bar b' });
@@ -596,7 +604,7 @@ export class HUD {
         }
         const rk = clamp((t - 3.45) / 0.55);
         const e = easeOutBack(rk, 2.2);
-        setBars(lerp(revealFrom.a, share, e), lerp(revealFrom.b, 1 - share, e));
+        setBars(lerp(revealFrom.a, ba, e), lerp(revealFrom.b, bb, e));
         const nk = easeOutCubic(clamp((t - 3.45) / 0.45));
         numA.textContent = fmt(pa * nk); numB.textContent = fmt(pb * nk);
         if (!punched && t > 3.75) { punched = true; el.classList.add('is-winner', winner === 1 ? 'is-win-b' : winner === 0 ? 'is-win-a' : 'is-tie'); }

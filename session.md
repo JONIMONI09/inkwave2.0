@@ -184,6 +184,79 @@ never splatting on its own.
   plausible deviation from the canon constant flight; left as-is per brief. 5.5 s respawn documented as
   intentional. Squid Roll/Surge remain optional future features (none implemented).
 
+### Coding-manager pass — results, input priority, touch, loading gate, freezes, Firefox (2026-10-05)
+Seven items. Findings labelled confirmed vs. already-correct; nothing was changed on suspicion alone.
+
+- **B1 results bar (confirmed bug):** `hud._judgeTurf` derived the bar widths from the *share*
+  `pa/(pa+pb)`, so the bar showed each team normalising against the other instead of its actual share of
+  all countable turf — 30 % vs 70 % painted read as a full-width two-sided split, and the unpainted middle
+  vanished. It also picked the winner itself from rounded display numbers. Fix: `hud._judgeTurf` now takes
+  `winner` (main.js passes the authoritative `match.result.winner`), animates the bars to each team's
+  *absolute* coverage fraction of all turf (normalising only if the two sum above 100 %), keeps `share`
+  solely for the clash marker, and guards zero/NaN/negative through a `fin()` helper. The results screen's
+  own bar was already absolute and is unchanged. Test: `test/results.test.mjs` (7).
+- **B2 swim → sub input priority (confirmed gap):** tapping SUB while swimming dropped straight into squid
+  form and swallowed the throw. New `PLAYER.subEmergeWindow = 0.4`: a sub press while squid opens a pending
+  window, suppresses re-entering squid, and synthesises the throw as a normal `winp.sub` press plus a
+  next-frame `subReleased` once the body is out — so ink cost, `SK.blocked`, Barrage and the input locks
+  all still apply and the online authority path is untouched. Player-only (bots arbitrate their own
+  swim/throw in bots.js). `actor.reset()` clears the new state. Test: `test/swimsub.test.mjs` (7) — it caught
+  two real bugs while being written (a missing `!this.bot` gate and a re-dive on the release frame).
+- **B3 Super Jump touch targeting (confirmed bug):** `#touch-root` sits at z-index 15, *above* the diorama,
+  and both `.tw-aim` (inset 0) and `.tw-zone` (left 44 % × bottom 66 %) swallowed taps — so on a phone a
+  teammate's arrow could not be tapped. Fix: `diorama.js` gets a touch-only `.iw-dio__tap` catcher and
+  `_tap(e)` (nearest jumpable pin within a thumb's reach, `G.input.touchOnly` gate, `k > 0.7`, skips the
+  player's own arrow, `preventDefault`, and the *same* `_jump()` path a click uses so it queues while
+  splatted); `touch.js` `_setMapMode(on)` drops `pointer-events` on both surfaces while MAP is held.
+  Test: `test/touch.test.mjs`.
+- **B4 loading gate (reverted as instructed):** commit 572dcaac put a full loading screen in front of every
+  match start; the previous behaviour was 19dd9bd (camera fade, build behind the fade, intro fly-over).
+  `startMatch` no longer shows the overlay up front — it fades out, builds behind the fade, and a 600 ms
+  measured timer raises the themed loading screen *only* when preparation is genuinely slow. `_gateDone`
+  closes immediately (the intro plays) unless the loading screen is actually up, in which case the 700 ms
+  GO beat is kept; `quitToMenu` clears the timer. `startNetMatch` (online) never had a gate and still has
+  none. Boot loading and the perf instrumentation are untouched.
+- **B5 touch-layout editor (new):** `src/core/touch-layout.js` stores positions as viewport fractions with a
+  per-control size and opacity under the versioned key `inkwave.touchLayout` (`version: 1`), separately for
+  portrait and landscape, clamped on every read (`MIN_SIZE 0.6`, `MIN_OPACITY 0.2`) and defaulted per control.
+  `touch.js` applies it (`applyLayout`, re-applied on resize/orientationchange via `bindOrientation`);
+  `#touch-root.is-custom .tw-btn` switches from right/bottom to centre-anchored left/top so a drag keeps the
+  CSS `clamp()` sizing. *Settings → Touch* gains a **Touch layout** editor (drag a button on a device card
+  that mirrors the orientation, size/opacity sliders, per-orientation reset, DONE) and a **Reset** row.
+  Live: `api.setTouchLayout` persists and pushes the record straight into the touch layer.
+  Three bugs in the first draft were caught and fixed: `this.menus?.toast` (no such property — it is
+  `this.toast`), a placeholder `_setSetting('_touchstamp', …)`, and a drag that could only start on empty card
+  space because the buttons stopped propagation.
+- **B6 selection freezes (partially addressed, honestly):** an inline boot splash now exists in `index.html`
+  (`#boot`, self-contained CSS, reduced-motion aware, `pointer-events: none`, retired by
+  `window.inkwaveBootDone()` the moment the real loading screen mounts) so the seconds before the module graph
+  arrives show progress instead of a black `opacity: 1` fade. `menus.showBusy()/hideBusy()` add a corner
+  squid spinner with anti-flicker (250 ms in, ≥700 ms held) for work behind a visible screen, wired into the
+  match gate. The remaining skin/weapon freeze is `_swapChar` building a whole `Character` synchronously —
+  it cannot be covered by a spinner, because the thread is blocked and nothing can paint. It is now measured
+  (`Perf.record('showcase.swap')`, a rate-limited log line above 45 ms) instead of silently hitching.
+- **B7 Firefox / feature detection (confirmed gap):** the renderer assumed a modern GL context. New
+  `src/core/gpu-caps.js` probes renderable half-float, filterable half-float, `KHR_parallel_shader_compile`,
+  MAX_SAMPLES and anisotropy — asked of the driver, never sniffed (a test asserts no `userAgent` /
+  `navigator.platform` / `isFirefox` branch survives in code). Without renderable half-float the composer
+  drops to an 8-bit target and bloom disables itself (it thresholds HDR values); MSAA is clamped to what the
+  driver accepts; the answer is logged once (`__inkwave.R.capsLine`). Audio unlock and pointer-lock fallbacks
+  were audited and were **already correct** (`_installUnlock` listens capture-phase on four gesture events plus
+  `visibilitychange`; `requestLock` retries without `unadjustedMovement` on a rejected promise) — unchanged.
+  The 3D squid's tentacle wave (`uWig`) was audited and runs in all four `_updateSquid` branches
+  (climb / swim / airborne / dry) — unchanged.
+- **Tests:** `npm test` now runs all five suites (41 tests): scoring 13, results 7, swimsub 7, touch 5,
+  compat 9. Three real bugs were found *by* the new tests while writing them (normalizeEntry collapsing a
+  missing entry to 0,0; the boot-splash hand-off; the caps probe reading `null` "not filterable" as support).
+- **Verification:** `npm run check`, `npm test` (41/41), `npm run check-maps`, `npm run music` all green.
+  **Not verified:** the touch editor, Super Jump tap targeting, the loading-gate timing and the Firefox
+  fallbacks all need a real device/browser — headless in-game boot exceeds this container's command cap
+  (74–160 s vs 180 s), and the Firefox path needs a Firefox with software GL. CI smoke plus a phone run
+  are still required before calling those accepted.
+- **Known regression risk from this pass:** `src/ui/menus.js` was accidentally overwritten mid-session and
+  restored from git; every menus.js change was re-applied and is covered by `npm run check` and
+  `test/touch.test.mjs`, but the screen-by-screen visual pass on menus is worth re-doing once.
+
 - **Read the perf baseline and act on it** — the instrumentation (`__inkwave.perf.snapshot()`) is
   in but the numbers are not yet captured on a real PC or Android device; the first snapshot
   during a live match tells us whether `paint.flush`, `nav.path`, `zonePlan`, or the render pass

@@ -27,6 +27,8 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { G, damp, lerp, rng } from '../core/ctx.js';
+import { Perf } from '../core/perf.js';
+import { Log } from '../core/logger.js';
 import { WEAPONS } from '../config.js';
 
 // ================================================================================================ helpers
@@ -1179,6 +1181,7 @@ export class Showcase {
 
   /** Replace the pedestal kid with one wearing `style` (pre-warmed off-screen so it appears mid-pose, not T-posed). */
   _swapChar(style, dance = 'lobby_pose') {
+    const t0 = performance.now();
     const old = this.chars[0];
     const c = new this.CharacterClass({ color: this.color.clone(), weapon: this.weapon || 'shooter', style: { ...style }, name: 'preview', isLocal: false });
     c._a = old ? old._a : this._anim();
@@ -1195,6 +1198,12 @@ export class Showcase {
     this.scene.add(c.root);
     this.chars[0] = c;
     this.style = { ...style };
+    // Building a kid is the one genuinely synchronous block left in the menus (geometry + materials for the new
+    // look). It can't be signposted with the corner spinner — the thread is busy, nothing can paint — so it is
+    // measured instead and shows up in `__inkwave.perf.spots['showcase.swap']`, and a slow one gets a log line.
+    const ms = performance.now() - t0;
+    Perf.record('showcase.swap', ms);
+    if (ms > 45) Log.occasional('perf', 8000, `look swap ${ms | 0}ms (${this.mode})`);
     return c;
   }
 

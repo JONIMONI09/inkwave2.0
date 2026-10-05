@@ -289,9 +289,22 @@
 .iw-progress__squid { position: absolute; top: 50%; left: 0; width: calc(var(--u) * 2.7); height: calc(var(--u) * 2.7); transform: translate(-50%, -50%); color: var(--a); filter: drop-shadow(0 1px 0 var(--k)); pointer-events: none; }
 .iw-progress__squid svg { width: 100%; height: 100%; display: block; animation: iw-squid-swim .5s ease-in-out infinite alternate; }
 @keyframes iw-squid-swim { from { rotate: -14deg; } to { rotate: 9deg; } }
+/* tentacle swim wave: each tentacle is its own path, rotating about its root (top of the path) with a phase delay so
+   the wave travels along the squid. transform-box: fill-box makes the origin local, so no magic numbers. */
+.iw-tent { transform-box: fill-box; transform-origin: top center; animation: iw-tent-swim .46s ease-in-out infinite alternate; }
+.iw-tent--0 { animation-delay: 0s; } .iw-tent--1 { animation-delay: -.115s; } .iw-tent--2 { animation-delay: -.23s; } .iw-tent--3 { animation-delay: -.345s; }
+@keyframes iw-tent-swim { from { rotate: -13deg; } to { rotate: 15deg; } }
 .iw-loading.is-done .iw-progress__pct { color: var(--a); }
 .iw-loading.is-done .iw-progress__squid { animation: iw-squid-pop .5s var(--spring); }
 @keyframes iw-squid-pop { 45% { scale: 1.5; rotate: -16deg; } }
+/* corner busy spinner: real in-session loading (stage build / character warm) that stays under the 600 ms
+   full-screen threshold. Anti-flicker timing lives in menus.showBusy/hideBusy (250 ms in, 700 ms held). */
+.iw-busy { position: fixed; right: calc(14px + env(safe-area-inset-right)); bottom: calc(14px + env(safe-area-inset-bottom)); z-index: 55; width: calc(var(--u) * 3); height: calc(var(--u) * 3); color: #fff; opacity: 0; pointer-events: none; transition: opacity .25s ease; }
+.iw-busy.is-on { opacity: .92; animation: iw-busy-wob .5s ease-in-out infinite alternate; }
+.iw-busy svg { width: 100%; height: 100%; display: block; filter: drop-shadow(0 1px 0 var(--k, #15121c)) drop-shadow(0 0 8px rgba(0, 0, 0, .55)); }
+.iw-busy .iw-tent { animation-duration: .38s; }
+@keyframes iw-busy-wob { from { rotate: -15deg; scale: 1; } to { rotate: 10deg; scale: 1.14; } }
+
 .iw-loading__label { font: 700 var(--fs-m) / 1 'Rubik', sans-serif; letter-spacing: .06em; color: rgba(255, 255, 255, .8); text-transform: uppercase; }
 .iw-loading__label.is-in { animation: iw-fade .3s; }
 .iw-tip { position: absolute; left: 50%; bottom: calc(var(--u) * 5.2); transform: translateX(-50%); display: flex; align-items: center; gap: calc(var(--u) * 1.2);
@@ -1132,7 +1145,7 @@ circle.iw-ico-cut { fill: var(--cut, #fff); }
 
 /* ------------------------------------------------------------------ reduced motion (light touch) */
 @media (prefers-reduced-motion: reduce) {
-  .iw-logo__l, .iw-drip path, .iw-drip__drop, .iw-bgblob, .iw-cursor__ring, .iw-btn--primary::before, .iw-res__splat svg, .iw-cred__endsplat, .iw-title__presstext, .iw-progress__squid svg { animation: none !important; }
+  .iw-logo__l, .iw-drip path, .iw-drip__drop, .iw-bgblob, .iw-cursor__ring, .iw-btn--primary::before, .iw-res__splat svg, .iw-cred__endsplat, .iw-title__presstext, .iw-progress__squid svg, .iw-progress__squid path, .iw-busy, .iw-busy svg { animation: none !important; }
   .iw-in, .iw-rowin { animation-duration: .2s !important; animation-delay: 0s !important; }
   .iw-wipe__mark { display: none; }
 }
@@ -2816,6 +2829,11 @@ circle.iw-ico-cut { fill: var(--cut, #fff); }
   box-shadow: 0 3px 12px rgba(0, 0, 0, .35), inset 0 -3px 0 rgba(0, 0, 0, .22);
   transition: transform .08s ease, background .08s ease; }
 .tw-btn.is-down { background: rgba(255, 138, 20, .55); border-color: #ffb063; transform: scale(.92); }
+/* A player layout (Settings → Touch layout) positions every button by its centre in viewport fractions and scales
+   it, so the CSS right/bottom defaults step aside. translate centres it; the size multiplier rides the `scale`
+   property so the .is-down transform (and the focus ring) still compose cleanly. */
+#touch-root.is-custom .tw-btn { right: auto; bottom: auto; translate: -50% -50%; scale: var(--tw-scale, 1); }
+#touch-root.is-map .tw-btn { opacity: .5; }
 /* Sizes scale with vmin and positions are viewport percentages, so the cluster stays clear of the
    HUD and of itself from a 480×270 embedded view up to a tablet in portrait. */
 .tw-btn { font-size: clamp(10px, 3.1vmin, 16px); }
@@ -2827,6 +2845,63 @@ circle.iw-ico-cut { fill: var(--cut, #fff); }
 .tw-btn--cheer   { right: calc(36% + env(safe-area-inset-right)); bottom: calc(30% + env(safe-area-inset-bottom)); width: clamp(32px, 9vmin, 52px);  height: clamp(32px, 9vmin, 52px); }
 .tw-btn--map     { right: calc(20% + env(safe-area-inset-right)); top: calc(3% + env(safe-area-inset-top));       width: clamp(34px, 9vmin, 54px);  height: clamp(34px, 9vmin, 54px); }
 .tw-btn--pause   { right: calc(2% + env(safe-area-inset-right));  top: calc(3% + env(safe-area-inset-top));       width: clamp(30px, 8vmin, 44px);  height: clamp(30px, 8vmin, 44px); }
+
+/* ==================================================================================================
+   Touch-layout editor — Settings → Touch layout (src/ui/menus.js `_scr_touchedit`).
+   Left: the settings panel. Right: a device card that mirrors the orientation being edited and carries the
+   real `.tw-btn` look, so the arrangement on screen is the arrangement you play with.
+   ================================================================================================== */
+.iw-touchedit .iw-tle {
+  position: absolute; left: calc(var(--u) * 3.6); top: calc(var(--u) * 10.4);
+  width: min(38vw, calc(var(--u) * 34)); display: flex; flex-direction: column;
+  gap: calc(var(--u) * 1.2); padding: calc(var(--u) * 1.6);
+}
+.iw-tle__head { display: flex; align-items: center; gap: calc(var(--u) * .9); }
+.iw-tle__head i { width: calc(var(--u) * 3); height: calc(var(--u) * 3); color: var(--a); }
+.iw-tle__head i svg { width: 100%; height: 100%; }
+.iw-tle__head b { font-family: var(--display); font-size: calc(var(--u) * 1.9); letter-spacing: .06em; }
+.iw-tle__head small { margin-left: auto; opacity: .65; font-size: calc(var(--u) * 1.15); }
+.iw-tle__sel { display: flex; align-items: baseline; gap: calc(var(--u) * .8);
+  padding: calc(var(--u) * .7) calc(var(--u) * 1); border-radius: var(--r);
+  background: rgba(255, 255, 255, .06); }
+.iw-tle__sel b { font-family: var(--display); font-size: calc(var(--u) * 1.5); color: var(--a-l); letter-spacing: .06em; }
+.iw-tle__sel small { opacity: .7; font-size: calc(var(--u) * 1.15); }
+.iw-tle__slider { display: grid; gap: calc(var(--u) * .4); font-size: calc(var(--u) * 1.15); letter-spacing: .1em; }
+.iw-tle__slider > span { display: flex; opacity: .8; }
+.iw-tle__slider .iw-tle__val { margin-left: auto; color: var(--a-l); }
+.iw-tle__slider input { width: 100%; accent-color: var(--a); pointer-events: auto; }
+.iw-tle__foot { display: flex; gap: calc(var(--u) * .8); margin-top: calc(var(--u) * .4); }
+.iw-tle__foot > * { flex: 1; }
+
+.iw-tle__stage { position: absolute; right: calc(var(--u) * 3.6); top: calc(var(--u) * 10.4);
+  bottom: calc(var(--u) * 8); aspect-ratio: 16 / 9; max-width: 52vw; margin-left: auto;
+  border-radius: calc(var(--u) * 2.4); touch-action: none; cursor: grab;
+  background:
+    radial-gradient(120% 90% at 50% 0%, rgba(var(--a-rgb), .12), transparent 70%),
+    linear-gradient(180deg, #10131f, #0a0d16);
+  border: 2px solid rgba(255, 255, 255, .14);
+  box-shadow: 0 calc(var(--u) * 1.6) calc(var(--u) * 4) rgba(0, 0, 0, .45), inset 0 0 0 calc(var(--u) * .2) rgba(0, 0, 0, .5);
+}
+/* Portrait edits a portrait card: same fractions, phone proportions. */
+.iw-tle__stage.is-portrait { aspect-ratio: 9 / 16; right: auto; left: 50%; translate: -50% 0; max-width: min(34vw, calc(var(--u) * 30)); }
+/* the card symbol: which device you are editing, with the game's own squid for company */
+.iw-tle__card { position: absolute; left: 50%; top: calc(var(--u) * 1.2); translate: -50% 0;
+  display: flex; align-items: center; gap: calc(var(--u) * .6); pointer-events: none; }
+.iw-tle__card i { width: calc(var(--u) * 3.4); height: calc(var(--u) * 3.4); color: var(--a-l); }
+.iw-tle__card i svg { width: 100%; height: 100%; }
+.iw-tle__card small { font-family: var(--display); font-size: calc(var(--u) * 1.1); letter-spacing: .22em; opacity: .55; }
+/* the left-thumb movement zone, drawn where it really is so people keep the buttons out of it */
+.iw-tle__stick { position: absolute; left: 0; bottom: 0; width: 44%; height: 66%;
+  display: grid; place-items: center; pointer-events: none;
+  border-radius: 0 0 0 calc(var(--u) * 2.4);
+  background: repeating-linear-gradient(45deg, rgba(255, 255, 255, .05) 0 8px, transparent 8px 16px);
+  box-shadow: inset 0 0 0 2px rgba(255, 255, 255, .12); }
+.iw-tle__stick small { font-size: calc(var(--u) * 1.05); letter-spacing: .24em; opacity: .4; }
+.iw-tle__btn { left: 50%; top: 50%; translate: -50% -50%; pointer-events: auto; cursor: grab;
+  transition: opacity .1s linear; }
+.iw-tle__btn.is-sel { border-color: var(--a-l); box-shadow: 0 0 0 calc(var(--u) * .35) rgba(var(--a-rgb), .8), 0 calc(var(--u) * .6) calc(var(--u) * 1.6) rgba(0, 0, 0, .4); }
+/* the dragged button follows the finger with no transition, everything else keeps the snap */
+.iw-tle__stage:active { cursor: grabbing; }
 
 /* ---- compact HUD on small screens: keep every counter readable without shrinking gameplay view ---- */
 @media (max-width: 920px) {

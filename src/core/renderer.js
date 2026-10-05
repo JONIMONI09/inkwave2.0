@@ -11,6 +11,7 @@ import { GTAOPass } from 'three/addons/postprocessing/GTAOPass.js';
 import { SMAAPass } from 'three/addons/postprocessing/SMAAPass.js';
 import { QUALITY } from '../config.js';
 import { G } from './ctx.js';
+import { probeCaps, describe } from './gpu-caps.js';
 
 const BLOOM = [0.28, 0.45, 2.4];   // default bloom: strength, radius, HDR threshold
 
@@ -94,7 +95,13 @@ export class Renderer {
     r.shadowMap.type = THREE.PCFShadowMap;
     r.setClearColor(0x9fd8f0, 1);
     container.appendChild(r.domElement);
-    this.appleGPU = isAppleGPU(r.getContext());
+    const gl = r.getContext();
+    this.appleGPU = isAppleGPU(gl);
+    // What this driver can actually do (half-float colour targets, parallel shader compile, MSAA). Asked, not guessed:
+    // Firefox on Linux and software GL both come up without renderable RGBA16F, and the old code assumed it.
+    this.caps = probeCaps(gl);
+    this.hdr = this.caps.halfFloat;      // false → 8-bit target + no bloom (the graceful path, not a black screen)
+    this.capsLine = describe(this.caps);
     r.domElement.id = 'game-canvas';
     this.container = container;
     this.scene = null; this.camera = null;
@@ -118,9 +125,11 @@ export class Renderer {
     r.setSize(w, h);
     // effective MSAA sample count (also read by the showcase for its private target)
     this.samples = this.appleGPU ? 0 : q.msaa || 0;
+    if (this.samples && this.caps.maxSamples && this.samples > this.caps.maxSamples) this.samples = this.caps.maxSamples;
     // presets with bloom off never read HDR values back out of the target (grade/tonemap only), so
-    // they can run an 8-bit target: half the fill bandwidth — the dominant cost on weak mobile GPUs
-    const rtType = q.bloom ? THREE.HalfFloatType : THREE.UnsignedByteType;
+    // they can run an 8-bit target: half the fill bandwidth — the dominant cost on weak mobile GPUs.
+    // Without a renderable half-float buffer (older Firefox/software GL) the HDR target is skipped entirely.
+    const rtType = (q.bloom && this.hdr) ? THREE.HalfFloatType : THREE.UnsignedByteType;
     const rt = new THREE.WebGLRenderTarget(w * pr, h * pr, { type: rtType, samples: this.samples });
     const comp = (this.composer = new EffectComposer(r, rt));
     comp.setPixelRatio(pr);
@@ -140,7 +149,8 @@ export class Renderer {
       comp.addPass(ao);
     }
     this.bloom = new UnrealBloomPass(new THREE.Vector2(w, h), ...BLOOM);
-    this.bloom.enabled = !!(q.bloom && this.settings.bloom);
+    // bloom thresholds HDR values, so it needs the HDR target; without one it would read clamped 8-bit and smear
+    this.bloom.enabled = !!(q.bloom && this.settings.bloom && this.hdr);
     comp.addPass(this.bloom);
     this.grade = new ShaderPass(GradeShader);
     this._gradeSrc = null;   // (re)apply the theme grade + bloom to the new passes
@@ -171,7 +181,7 @@ export class Renderer {
       this._buildComposer();
       this.scene?.traverse((o) => { if (o.material) { const m = Array.isArray(o.material) ? o.material : [o.material]; m.forEach((mm) => (mm.needsUpdate = true)); } });
     }
-    if (this.bloom) this.bloom.enabled = !!(this.q.bloom && settings.bloom);
+    if (this.bloom) this.bloom.enabled = !!(this.q.bloom && settings.bloom && this.hdr);
   }
 
   // Lowest dynamic scale: never below 0.75 of CSS-pixel density (0.6 on the potato preset, where weak
