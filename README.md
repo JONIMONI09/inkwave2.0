@@ -126,6 +126,24 @@ screen drew (see [`docs/NET.md`](docs/NET.md#how-the-netcode-works-srcnetnetmatc
 
 Rendering is three.js r186 (vendored, plain ES modules with an import map) with GTAO, bloom and a custom grade pass.
 
+## Rules & fairness notes
+
+How the match is scored — the deliberate calls, where they match Splatoon 3 and where they don't:
+
+- **Only floor ink scores.** Turf coverage counts live floor cells (0.25 m grid). Wall, ceiling and buried paint is
+  visual only: it never feeds turf points, the special gauge or the judge — so painting a wall can't charge your
+  special. Repainting your own ink claims nothing; flipping enemy ink does.
+- **Zone Control objective play is measured in cells.** The zoneTurf stat (results / XP) counts ink that actually
+  lands inside the live objective's cells — not where you stood or aimed. Ink outside the zone is still ordinary
+  turf: it scores and charges your special, it just isn't objective play.
+- **Tie-break is deterministic.** An exact 50.0 / 50.0 tie goes to Alpha and is displayed as the +0.1 % tie-break
+  (50.1 % vs 50.0 %), matching Splatoon 3's rule — never a coin flip. Online, the host judges and every client
+  shows the host's result, so outcomes are identical everywhere.
+- **5.5 s respawn is pacing, not a bug** (`PLAYER.respawnTime`), and you keep 50 % of your special gauge through a
+  splat (`PLAYER.specialKeepOnSplat`) — both intentional deviations/tunings vs. canon.
+
+Regression tests for the scoring rules: `npm test` (headless, no GPU).
+
 ## Browser support
 
 Chrome and Edge are the target; Firefox works. Safari runs but is slower. A discrete or recent integrated GPU is recommended for the High preset; the settings menu has Medium, Low and Lite tiers.

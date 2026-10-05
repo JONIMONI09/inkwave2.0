@@ -35,7 +35,7 @@ screen-FX modules should subscribe to these instead of editing gameplay code.
 | `special:slam` | `{ actor, pos, radius }` |
 | `storm:start` / `storm:end` | `{ pos, team }` |
 | `superjump:land` | `{ actor, pos }` |
-| `turf` | `{ actor, area }` (every claimed chunk; aggregate yourself) |
+| `turf` | `{ actor, area, zoneArea }` — emitted by `Actor.addTurf` / `addTurfNoSpecial` for every credited claim (walls, ceilings, buried cells and own repaints claim nothing). `zoneArea` is the part of `area` inside the live Zone Control objective (`0` outside zones mode); `Match._zoneTurf` books it into the actor's `zoneTurf` stat. Aggregate yourself. |
 
 ## Character → actor` inside character.js)
 | name | data |
@@ -65,6 +65,7 @@ longer emitted.
 | `special:launch` / `special:sonar` / `special:shield` | `{ actor, to }` / `{ actor, pos }` / `{ actor, time }` | specials.js |
 | `special:strike` / `special:wail` | `{ actor, pos, radius }` / `{ actor, pos, dir }` | specials.js |
 | `storm:end` | `{ pos, team, actor }` | weapons.js |
+| `turf` (payload extension, this fork) | `{ actor, area, zoneArea }` — see the table above; zoneArea arrives per claim, already restricted to newly claimed cells inside the live objective | actor.js / paint.js |
 | `sub:use` | `{ actor, kind }` | subs.js |
 | `sub:land` / `sub:arm` / `sub:cloud` / `sub:destroyed` | `{ kind, pos, team, radius? }` | subs.js |
 | `sub:charge` | `{ actor, kind: 'shaker', level, max }` — the Shaker Bomb in hand reached a new charge (2, then 3 = max) | kits/shaker.js |

@@ -338,7 +338,7 @@ export class SubSystem {
       if (gy === -Infinity) { it.state = 'dead'; if (nearCam(it.pos)) G.fx?.burst(it.pos, UP, G.teamColors[it.team], { count: 10, speed: 3, size: 0.08 }); return; }
       it.pos.set(nx, gy, nz);
       it.trail += step;
-      if (it.trail > 0.35) { it.trail = 0; this._credit(it, G.paint.splat(_v.copy(it.pos).setY(it.pos.y + 0.12), s.trailRadius, it.team, { seed: Math.random() })); }
+      if (it.trail > 0.35) { it.trail = 0; const zone = { area: 0 }; this._credit(it, G.paint.splat(_v.copy(it.pos).setY(it.pos.y + 0.12), s.trailRadius, it.team, { seed: Math.random(), zoneOut: zone }), zone.area); }
     }
     it.mesh.position.copy(it.pos);
     it.mesh.rotation.set(0, it.heading, 0);
@@ -582,16 +582,18 @@ export class SubSystem {
     G.boss?.splash(it.owner, c, s.radius, s.directDamage, s.splashDamage, 'burst');   // Boss Battle
   }
   _paint(it, c, r) {
-    let area = G.paint.splat(c, r, it.team, { seed: Math.random() });
+    let area = 0;
+    const zone = { area: 0 };
+    area += G.paint.splat(c, r, it.team, { seed: Math.random(), zoneOut: zone });
     for (let k = 0; k < 4; k++) {
       const a = Math.random() * Math.PI * 2, rr = r * (0.55 + Math.random() * 0.45);
-      area += G.paint.splat(_v3.set(c.x + Math.cos(a) * rr, c.y + 0.3, c.z + Math.sin(a) * rr), 0.5 + Math.random() * 0.4, it.team, { seed: Math.random() });
+      area += G.paint.splat(_v3.set(c.x + Math.cos(a) * rr, c.y + 0.3, c.z + Math.sin(a) * rr), 0.5 + Math.random() * 0.4, it.team, { seed: Math.random(), zoneOut: zone });
     }
-    this._credit(it, area);
+    this._credit(it, area, zone.area);
   }
-  _paintUnder(it, r) { this._credit(it, G.paint.splat(_v3.copy(it.pos).setY(it.pos.y + 0.2), r, it.team, { seed: Math.random() })); }
+  _paintUnder(it, r) { const zone = { area: 0 }; this._credit(it, G.paint.splat(_v3.copy(it.pos).setY(it.pos.y + 0.2), r, it.team, { seed: Math.random(), zoneOut: zone }), zone.area); }
   // turf for the thrower; ink from a special (Bomb Barrage throws) never charges the special meter
-  _credit(it, area) { if (it.sp) it.owner.addTurfNoSpecial(area); else it.owner.addTurf(area); }
+  _credit(it, area, zoneArea = 0) { if (it.sp) it.owner.addTurfNoSpecial(area, zoneArea); else it.owner.addTurf(area, zoneArea); }
 
   // ---------------------------------------------------------------------------------------------- blocking + damage
   _hurt(it, dmg) {

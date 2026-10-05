@@ -132,12 +132,14 @@ export class Match {
     if (this.mode === 'boss') { this.bossMode = new BossMode(this); this.boss = this.bossMode.boss; }
   }
 
-  // Zone Control: ink laid while standing on (or aiming into) the live zone counts as objective play (results / XP)
-  _zoneTurf({ actor, area }) {
-    const Z = this.zones;
-    if (!Z || this.state !== 'playing' || !actor || !(area > 0)) return;
-    const on = (p) => p && Z.active.zones.some((z) => inZone(z.def, p));
-    if (on(actor.pos) || on(actor.aimPoint)) actor.stats.zoneTurf = (actor.stats.zoneTurf || 0) + area;
+  // Zone Control: ink the splat actually left inside the live zone counts as objective play (results / XP).
+  // paint.js reports the in-zone part of each claim in the event's `zoneArea` (per-cell test, the same outline +
+  // height check zoneCells() builds the zones' cells with) — actor position and aim point deliberately do not
+  // matter, so standing outside the zone spraying into it credits nothing, and being inside while painting the
+  // floor outside it credits nothing either.
+  _zoneTurf({ actor, zoneArea }) {
+    if (!this.zones || this.state !== 'playing' || !actor || !(zoneArea > 0)) return;
+    actor.stats.zoneTurf = (actor.stats.zoneTurf || 0) + zoneArea;
   }
 
   // Zone Control decided the match (knockout / overtime result): straight to time's up
@@ -253,7 +255,7 @@ export class Match {
   _judge() {
     if (this.zones) {
       const Z = this.zones;
-      this.result = { mode: 'zones', coverage: G.paint.coverage(), winner: Z.winner ?? (Math.random() < 0.5 ? 0 : 1), reason: Z.reason,
+      this.result = { mode: 'zones', coverage: G.paint.coverage(), winner: Z.winner ?? 0, reason: Z.reason,
         counts: [Math.ceil(Z.count[0]), Math.ceil(Z.count[1])], penalty: [...Z.penalty], overtime: Z.overtime, log: Z.log };
       G.netm?.sendResult(this.result);        // online: every client shows the host's result
       this.setState('judge');
@@ -266,8 +268,14 @@ export class Match {
       return;
     }
     const cov = G.paint.coverage();
-    const win = cov[0] === cov[1] ? (Math.random() < 0.5 ? 0 : 1) : cov[0] > cov[1] ? 0 : 1;
-    this.result = { coverage: cov, winner: win };
+    // Turf tie-break (Splatoon 3's rule, deterministic): an exact tie goes to team 0 (Alpha) with the displayed
+    // coverage nudged +0.1 % — never a coin flip, so the same paint state always judges the same way. Online this
+    // runs on the host only and travels to every client through netmatch.sendResult ('res'), so results stay
+    // authoritative and consistent across clients.
+    const tie = cov[0] === cov[1];
+    if (tie) cov[0] += 0.001;   // +0.1 % of the stage — matches the UI's one-decimal display
+    const win = tie ? 0 : cov[0] > cov[1] ? 0 : 1;
+    this.result = { coverage: cov, winner: win, ...(tie ? { tieBreak: true } : {}) };
     G.netm?.sendResult(this.result);        // online: every client shows the host's count
     this.setState('judge');
   }
@@ -281,19 +289,4 @@ export class Match {
     }));
   }
 }
-
-// a point on (or just above) a zone: inside one of its outlines, near its floor heights
-function inZone(def, p) {
-  if (p.y < (def.y0 ?? -2) - 1 || p.y > (def.y1 ?? 6) + 2.5) return false;
-  for (const poly of def.polys || [def.poly]) {
-    let inside = false;
-    for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
-      const [xi, zi] = poly[i], [xj, zj] = poly[j];
-      if ((zi > p.z) !== (zj > p.z) && p.x < ((xj - xi) * (p.z - zi)) / (zj - zi) + xi) inside = !inside;
-    }
-    if (inside) return true;
-  }
-  return false;
-}
-
 function shuffle(a) { for (let i = a.length - 1; i > 0; i--) { const j = (Math.random() * (i + 1)) | 0; [a[i], a[j]] = [a[j], a[i]]; } return a; }

@@ -277,14 +277,15 @@ export class WeaponRunner {
     // paint a stripe across the drum: kind 'roll' + the roll direction → paint.js lays one straight-edged band segment
     // per splat (identical on the CPU turf grid) instead of round blobs, so rolled turf reads as a clean stripe
     let area = 0;
+    const zone = { area: 0 };
     const rx = fz, rz = -fx; // right-ish perpendicular
     _fwd.set(fx, 0, fz);
     for (let i = -1; i <= 1; i++) {
       const off = i * w.rollWidth * 0.33;
       _v.set(a.pos.x + fx * 0.75 + rx * off, a.pos.y + 0.35, a.pos.z + fz * 0.75 + rz * off);
-      area += G.paint.splat(_v, 0.62, a.team, { seed: Math.random(), kind: 'roll', stretch: _fwd });
+      area += G.paint.splat(_v, 0.62, a.team, { seed: Math.random(), kind: 'roll', stretch: _fwd, zoneOut: zone });
     }
-    a.addTurf(area);
+    a.addTurf(area, zone.area);
     emit('weapon:impact', { pos: _v.set(a.pos.x + fx * 0.75, a.pos.y + 0.02, a.pos.z + fz * 0.75).clone(), normal: a.groundN ? a.groundN.clone() : UP.clone(), team: a.team, kind: 'roll', radius: w.rollWidth / 2 });
     if (this.rumbleT <= 0) { this.rumbleT = 0.12; rumble(a, 0.04, clamp(hs / w.rollSpeed, 0, 1) * 0.14, 110); }
   }
@@ -302,7 +303,8 @@ export class WeaponRunner {
       if (this.rollPaint <= 0 && a.grounded) {          // the roll smears a trail of ink behind it
         this.rollPaint = 0.045;
         _v.set(a.pos.x, a.pos.y + 0.3, a.pos.z);
-        a.addTurf(G.paint.splat(_v, 0.62, a.team, { seed: Math.random(), kind: 'trail' }));
+        const zone = { area: 0 };
+        a.addTurf(G.paint.splat(_v, 0.62, a.team, { seed: Math.random(), kind: 'trail', zoneOut: zone }), zone.area);
       }
       if (d.t >= d.dur) { this.dodge = null; this.lockT = w.lockTime; }
       return;                                           // no shots mid-roll
@@ -620,7 +622,8 @@ Object.assign(WeaponRunner.prototype, {
     this.lastRollPos.copy(a.pos);
     a.ink = Math.max(0, a.ink - w.brushInkPerMeter * moved);
     _v.set(a.pos.x + fx * 0.65, a.pos.y + 0.35, a.pos.z + fz * 0.65);
-    a.addTurf(G.paint.splat(_v, w.brushWidth * 0.45, a.team, { seed: Math.random(), stretch: _v2.set(fx, 0, fz), stretchAmt: 0.5 }));
+    const zone = { area: 0 };
+    a.addTurf(G.paint.splat(_v, w.brushWidth * 0.45, a.team, { seed: Math.random(), stretch: _v2.set(fx, 0, fz), stretchAmt: 0.5, zoneOut: zone }), zone.area);
     emit('weapon:impact', { pos: _v.clone().setY(a.pos.y + 0.02), normal: a.groundN ? a.groundN.clone() : UP.clone(), team: a.team, kind: 'roll', radius: w.brushWidth / 2 });
     if (this.rumbleT <= 0) { this.rumbleT = 0.12; rumble(a, 0.02, clamp(hs / w.brushSpeed, 0, 1) * 0.08, 90); }
   },
@@ -842,7 +845,7 @@ export class Projectiles {
   // a bomb smashed before it goes off: gone, no blast
   defuseBomb(b) { const i = this.bombs.indexOf(b); if (i < 0) return; this.scene.remove(b.mesh); this.bombs.splice(i, 1); }
   // turf from a projectile / bomb: counts for the owner, but ink from a special never charges the special meter
-  _credit(o, area) { if (o.sp) o.owner.addTurfNoSpecial(area); else o.owner.addTurf(area); }
+  _credit(o, area, zoneArea = 0) { if (o.sp) o.owner.addTurfNoSpecial(area, zoneArea); else o.owner.addTurf(area, zoneArea); }
 
   _new() {
     const p = this.pool.pop() || { pos: new THREE.Vector3(), prev: new THREE.Vector3(), vel: new THREE.Vector3(), start: new THREE.Vector3() };
@@ -1264,15 +1267,16 @@ export class Projectiles {
     if (victim) { len = victim.d; this.applyHit(a, victim.e, dmg, 'charger'); }
     // paint along the line (projected to the ground)
     let area = 0;
+    const zone = { area: 0 };
     const step = w.lineSplatEvery;
     for (let s = 1.2; s < len - 0.3; s += step) {
       _v2.copy(m).addScaledVector(dir, s);
       const g = G.physics.raycast(_v2, DOWN, 3.5, _hit2, true);
-      if (g.hit) area += G.paint.splat(_v3.copy(g.point).addScaledVector(g.normal, 0.1), w.lineRadius * (0.8 + charge * 0.4), a.team, { seed: Math.random(), stretch: dir, stretchAmt: 1.2 });
+      if (g.hit) area += G.paint.splat(_v3.copy(g.point).addScaledVector(g.normal, 0.1), w.lineRadius * (0.8 + charge * 0.4), a.team, { seed: Math.random(), stretch: dir, stretchAmt: 1.2, zoneOut: zone });
     }
     if (hit.hit && !victim && !bossHit) {
       _v2.copy(hit.point).addScaledVector(hit.normal, 0.12);
-      area += G.paint.splat(_v2, w.impactRadius * (0.6 + 0.4 * charge), a.team, { seed: Math.random(), stretch: dir, stretchAmt: 0.6 });
+      area += G.paint.splat(_v2, w.impactRadius * (0.6 + 0.4 * charge), a.team, { seed: Math.random(), stretch: dir, stretchAmt: 0.6, zoneOut: zone });
       G.fx?.burst(hit.point, hit.normal, a.color, { count: 10, speed: 4, size: 0.09, paint: false });
       if (a.isLocal || a._nearCamera()) G.audio?.play('ink_hit_wall', { pos: hit.point, volume: 0.6 });
     }
@@ -1281,7 +1285,7 @@ export class Projectiles {
       emit('weapon:fire', { actor: a, weapon: w.id, muzzle: m.clone(), dir: dir.clone(), charge, len });
       emit('weapon:impact', { pos: end, normal: hit.hit && !victim && !bossHit ? hit.normal.clone() : dir.clone().negate(), team: a.team, kind: 'charger', radius: w.impactRadius * (0.6 + 0.4 * charge) });
     }
-    a.addTurf(area);
+    a.addTurf(area, zone.area);
     // beam visual: tracer front races out, white-hot core snaps off, the ink sheath thins and breaks into dashes
     const mesh = this._beamMesh();
     mesh.position.copy(m);
@@ -1481,12 +1485,14 @@ export class Projectiles {
   _explodeBomb(b) {
     const s = SUB.bomb;
     const c = b.pos;
-    let area = G.paint.splat(_v.copy(c).setY(c.y + 0.2), s.paintRadius, b.team, { seed: Math.random() });
+    let area = 0;
+    const zone = { area: 0 };
+    area += G.paint.splat(_v.copy(c).setY(c.y + 0.2), s.paintRadius, b.team, { seed: Math.random(), zoneOut: zone });
     for (let i = 0; i < 5; i++) {
       const a = Math.random() * Math.PI * 2, r = s.paintRadius * (0.6 + Math.random() * 0.4);
-      area += G.paint.splat(_v.set(c.x + Math.cos(a) * r, c.y + 0.5, c.z + Math.sin(a) * r), 0.7 + Math.random() * 0.5, b.team, { seed: Math.random() });
+      area += G.paint.splat(_v.set(c.x + Math.cos(a) * r, c.y + 0.5, c.z + Math.sin(a) * r), 0.7 + Math.random() * 0.5, b.team, { seed: Math.random(), zoneOut: zone });
     }
-    this._credit(b, area);
+    this._credit(b, area, zone.area);
     G.subs?.damageArea(c, s.radius, 60, b.team);
     G.fx?.explosion(c, G.teamColors[b.team], s.radius);
     G.audio?.play('bomb_explode', { pos: c });
@@ -1635,7 +1641,7 @@ export class Projectiles {
         if (p.trail > p.trailEvery) {
           p.trail = 0;
           const g = G.physics.raycast(p.pos, DOWN, 4, _hit2, true);
-          if (g.hit) this._credit(p, G.paint.splat(_v.copy(g.point).addScaledVector(g.normal, 0.1), p.trailRadius * (0.8 + Math.random() * 0.4), p.team, { seed: Math.random() }));
+          if (g.hit) { const zone = { area: 0 }; this._credit(p, G.paint.splat(_v.copy(g.point).addScaledVector(g.normal, 0.1), p.trailRadius * (0.8 + Math.random() * 0.4), p.team, { seed: Math.random(), zoneOut: zone }), zone.area); }
         }
       }
       if (!dead && p.age > p.life) {
@@ -1670,13 +1676,14 @@ export class Projectiles {
     const rad = p.radius * (0.85 + Math.random() * 0.3);
     const sloshr = p.type === 'slosh' && !!p.vol;   // an upstream slosher glob (our bucket's blobs paint as before)
     let area;
+    const zone = { area: 0 };
     if (sloshr) {
       // the wave lands as a thick stripe along its travel: stretched along the horizontal heading
       _dir.y = 0; if (_dir.lengthSq() < 1e-4) _dir.set(0, 0, 1); _dir.normalize();
-      area = G.paint.splat(_v, rad * 1.12, p.team, { seed: p.seed, stretch: _dir, stretchAmt: 1.25 });
+      area = G.paint.splat(_v, rad * 1.12, p.team, { seed: p.seed, stretch: _dir, stretchAmt: 1.25, zoneOut: zone });
       if (p.head) this._sloshSplash(p, hit.point, null);
-    } else area = G.paint.splat(_v, rad, p.team, { seed: p.seed, stretch: _dir, stretchAmt: 0.7 });
-    this._credit(p, area);
+    } else area = G.paint.splat(_v, rad, p.team, { seed: p.seed, stretch: _dir, stretchAmt: 0.7, zoneOut: zone });
+    this._credit(p, area, zone.area);
     if (p.type !== 'blast') emit('weapon:impact', { pos: hit.point.clone(), normal: hit.normal.clone(), team: p.team, kind: p.type === 'drop' || sloshr ? 'drop' : 'shot', radius: rad });
     const near = p.owner.isLocal || G.camera.position.distanceToSquared(hit.point) < 22 * 22;
     if (near) {
@@ -1695,7 +1702,7 @@ export class Projectiles {
     emit('weapon:impact', { pos: c.clone(), normal: new THREE.Vector3(0, 1, 0), team: p.team, kind: 'blast', radius: w.burstRadius });
     // paint under the burst
     const g = G.physics.raycast(_v2.copy(c).setY(c.y + 0.2), DOWN, 3.5, _hit2);
-    if (g.hit) this._credit(p, G.paint.splat(_v3.copy(g.point).addScaledVector(g.normal, 0.1), w.impactRadius, p.team, { seed: Math.random() }));
+    if (g.hit) { const zone = { area: 0 }; this._credit(p, G.paint.splat(_v3.copy(g.point).addScaledVector(g.normal, 0.1), w.impactRadius, p.team, { seed: Math.random(), zoneOut: zone }), zone.area); }
     for (const e of G.actors) {
       if (e.team === p.team || !e.alive || e === direct) continue;
       _v.copy(e.pos); _v.y += 0.7;
@@ -1776,7 +1783,7 @@ export class Projectiles {
           const a = Math.random() * Math.PI * 2, r = Math.sqrt(Math.random()) * sp.radius;
           _v.set(c.group.position.x + Math.cos(a) * r, c.group.position.y - 0.8, c.group.position.z + Math.sin(a) * r);
           const g = G.physics.raycast(_v, DOWN, 12, _hit);
-          if (g.hit && !c.ghost) c.owner.addTurfNoSpecial(G.paint.splat(_v2.copy(g.point).addScaledVector(g.normal, 0.1), 0.45 + Math.random() * 0.35, c.team, { seed: Math.random() }));   // (a special's rain)
+          if (g.hit && !c.ghost) { const zone = { area: 0 }; c.owner.addTurfNoSpecial(G.paint.splat(_v2.copy(g.point).addScaledVector(g.normal, 0.1), 0.45 + Math.random() * 0.35, c.team, { seed: Math.random(), zoneOut: zone }), zone.area); }   // (a special's rain)
         }
         if (!c.ghost) G.boss?.rain(c.owner, c.group.position.x, c.group.position.z, sp.radius * s, sp.dps * dt);
         for (const e of G.actors) {
