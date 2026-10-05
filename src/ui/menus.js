@@ -591,6 +591,15 @@ export class Menus {
 
   _go(name, opts = {}) { this.show(name, { ...opts, push: true }); }
 
+  // Leave a screen that was REACHED BY A PUSH and go back to the one underneath it.
+  // _go() pushes, which is right when you move forward into a new screen and wrong when you come back out: pushing
+  // 'settings' from 'touchedit' leaves the stack as [main, settings, touchedit, settings], and the next Back then pops
+  // straight back into the editor — the loop you land in if you press Esc twice. Pop instead.
+  _popTo(name) {
+    if (this._stack.length > 1 && this._stack[this._stack.length - 2] === name) { this._sfx('ui_back'); this.show(name, { pop: true, back: true }); return; }
+    this._go(name, { back: true });   // not where we came from (opened directly by the engine): fall back to pushing
+  }
+
   _back() {
     if (this._modal) { if (this._modal._onBack) this._modal._onBack(); else this._closeModal(); return; }
     if (performance.now() - this._shownAt < 200) return; // swallow the key that opened this screen
@@ -912,7 +921,7 @@ export class Menus {
       this._header('LOCAL PROFILES', { sub: 'Everything stays in this browser' }),
       panel,
       this._prompts([[['↑', '↓'], 'DPad', 'Choose'], ['Esc', 'B', 'Back']]));
-    return { el, wrap: true, initial: () => panel.querySelector('[data-nav]'), onBack: () => { this._go('settings', { back: true }); } };
+    return { el, wrap: true, initial: () => panel.querySelector('[data-nav]'), onBack: () => this._popTo('settings') };
   }
 
   // ================================================================================== SCREEN: touch layout editor
@@ -1040,13 +1049,13 @@ export class Menus {
         this._btn({ id: 'tlreset', label: 'RESET', icon: GLYPHS.reset, cls: 'iw-btn--ghost iw-btn--small', sound: 'ui_toggle',
           accept: () => { commit(() => { L[orient] = JSON.parse(JSON.stringify(DEFAULT_LAYOUT[orient])); }, true); this._sfx('ui_confirm'); build(); } }),
         this._btn({ id: 'tldone', label: 'DONE', icon: GLYPHS.check, cls: 'iw-btn--primary iw-btn--small',
-          accept: () => { commit(() => {}, true); this._sfx('ui_confirm'); this._go('settings', { back: true }); } })));
+          accept: () => { commit(() => {}, true); this._sfx('ui_confirm'); this._popTo('settings'); } })));
     const el = h('div', { class: 'iw-screen iw-touchedit' },
       h('div', { class: 'iw-scrim-left' }),
       this._header('TOUCH LAYOUT', { sub: 'Portrait and landscape are saved separately' }),
       panel, stage,
       this._prompts([[['←', '→'], 'DPad', 'Choose'], ['Esc', 'B', 'Back']]));
-    return { el, wrap: true, initial: () => panel.querySelector('[data-nav]'), onBack: () => { this._go('settings', { back: true }); } };
+    return { el, wrap: true, initial: () => panel.querySelector('[data-nav]'), onBack: () => this._popTo('settings') };
   }
 
   // ================================================================ SCREEN: loading

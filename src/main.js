@@ -1163,7 +1163,12 @@ class Game {
     const judgeP = zr
       ? this.hud?.judge({ mode: 'zones', colors: [G.teamHex[0], G.teamHex[1]], names: this.palette.names || TEAM_NAMES, counts: zr.counts, penalty: zr.penalty, winner: zr.winner, reason: zr.reason, overtime: zr.overtime, percents: [cov[0] * 100, cov[1] * 100] })
       : this.hud?.judge({ colors: [G.teamHex[0], G.teamHex[1]], percents: [cov[0] * 100, cov[1] * 100], names: this.palette.names || TEAM_NAMES, winner: m.result.winner });
-    await (judgeP || new Promise((r) => setTimeout(r, 4000)));
+    // The judge animation drives itself from the HUD's own rAF loop and resolves when it ends — but if that loop is
+    // ever stalled (the HUD paused, a tab throttling rAF, an fx callback throwing) nothing else moves the match on,
+    // and the player is left staring at the judge with no way to the results. Race it against a ceiling so the round
+    // always lands. `judgeP ||` alone never fired: a Promise is always truthy, so that fallback was dead code.
+    const JUDGE_MAX_MS = 9000;
+    if (judgeP) await Promise.race([judgeP.catch(() => {}), new Promise((r) => setTimeout(r, JUDGE_MAX_MS))]);
     const myTeam = m.local ? m.local.team : 0;
     const won = m.result.winner === myTeam;
     m.setState('results');
