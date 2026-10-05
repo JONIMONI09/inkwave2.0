@@ -8,7 +8,8 @@
 // blooms with sustained fire, recovers when you let go). Hit tests use the victim's visual (smoothed) body.
 import * as THREE from 'three';
 import { G, emit, clamp, lerp, smoothstep } from '../core/ctx.js';
-import { WEAPONS, SUB, SPECIALS, PLAYER } from '../config.js';
+import { WEAPONS, SUB, SPECIALS, PLAYER, SPAWN_PROTECT } from '../config.js';
+import { spawnShieldCross } from './spawn-protect.js';
 import { Physics, Hit } from './physics.js';
 import { MAIN_KITS, SUB_KITS } from './kits/registry.js';
 
@@ -24,6 +25,8 @@ const _m = new THREE.Matrix4(), _q = new THREE.Quaternion(), _s = new THREE.Vect
 const UP = new THREE.Vector3(0, 1, 0), DOWN = new THREE.Vector3(0, -1, 0), ZAX = new THREE.Vector3(0, 0, 1);
 const _hit = new Hit(), _hit2 = new Hit();
 const _res = { t: 0, dist: 0 };
+// reused by the spawn-shield field (weapons.js): crossing point + a normal, so the field costs no allocation
+const _shieldPt = new THREE.Vector3(), _shieldN = new THREE.Vector3(0, 1, 0);
 const DEG = Math.PI / 180;
 // trigger('shoot', HAND_*) arg for dual wield (character.js reads .hand; valueOf keeps numeric readers at 1)
 const HAND_R = Object.freeze({ hand: 0, valueOf() { return 1; } }), HAND_L = Object.freeze({ hand: 1, valueOf() { return 1; } });
@@ -1594,6 +1597,21 @@ export class Projectiles {
       if (p.drag) p.vel.multiplyScalar(1 - p.drag * dt * (p.age > p.straight ? 1 : 0));
       p.pos.addScaledVector(p.vel, dt);
       let dead = false;
+      // Spawn-protection field: hostile ink stops at the dome instead of travelling through it, so a protected
+      // player is unreachable rather than merely invulnerable. Friendly ordnance is untouched (p.team === the dome's
+      // team means it is your own shield, not a wall).
+      if (SPAWN_PROTECT.intercept && G.spawnProtectOn !== false) {
+        const hitShield = spawnShieldCross(p.prev, p.pos, 1 - p.team, _shieldPt);
+        if (hitShield) {
+          const col = G.teamColors[p.team];
+          G.fx?.ring(hitShield, _shieldN.set(0, 1, 0), col, { radius: 0.5 + p.size, life: 0.22, alpha: 0.8, thickness: 1, snap: false });
+          G.fx?.burst(hitShield, _shieldN.set(0, 1, 0), col, { count: 4, speed: 2.4, size: 0.06 });
+          if (G.camera.position.distanceToSquared(hitShield) < 30 * 30 && G.time - (this._shieldSnd || 0) > 0.12) {
+            this._shieldSnd = G.time; G.audio?.play('shield_hit', { volume: 0.35 });
+          }
+          return true;   // consumed by the shield: no damage, no pass-through
+        }
+      }
       // actors
       for (const e of G.actors) {
         if (e.team === p.team || !e.alive) continue;
@@ -1723,6 +1741,18 @@ export class Projectiles {
       _v.copy(b.pos);
       b.pos.addScaledVector(b.vel, dt);
       const hit = G.physics.segment(_v, b.pos, _hit);
+      // spawn-protection field: a bomb that reaches a dome is disarmed there, using the same removal path the wall
+      // hit uses (mesh back to the pool, no explosion) so it can never go off inside a protected area
+      if (!hit.hit && SPAWN_PROTECT.intercept) {
+        const sh = spawnShieldCross(_v, b.pos, 1 - b.team, _shieldPt);
+        if (sh) {
+          G.fx?.ring(sh, _shieldN.set(0, 1, 0), G.teamColors[b.team], { radius: 1.1, life: 0.3, alpha: 0.9, thickness: 1.4, snap: false });
+          G.fx?.burst(sh, _shieldN.set(0, 1, 0), G.teamColors[b.team], { count: 8, speed: 3, size: 0.07 });
+          if (G.camera.position.distanceToSquared(sh) < 30 * 30) G.audio?.play('shield_hit', { volume: 0.5 });
+          this.scene.remove(b.mesh); this.bombs.splice(i, 1);
+          continue;
+        }
+      }
       // boss mode: bombs glance off HULLBREAKER's shell (they'd otherwise sail through it)
       if (!hit.hit && G.boss && b.kind === 'bomb') {
         const bh = G.boss.segHit(_v, b.pos, 0.2), sh = bh && bh.target.pos && bh.target;

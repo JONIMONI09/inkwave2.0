@@ -13,10 +13,11 @@
 //  · jump buffer + coyote time, apex hang, hard-landing recovery, fire buffer across form changes
 import * as THREE from 'three';
 import { G, emit, clamp, damp, angleDiff, smoothstep } from '../core/ctx.js';
-import { PLAYER, WEAPONS, SPECIALS, SUBS } from '../config.js';
+import { PLAYER, WEAPONS, SPECIALS, SUBS, SPAWN_PROTECT } from '../config.js';
 import { makeContacts, Hit, GroundHit, WALKABLE } from './physics.js';
 import { WeaponRunner } from './weapons.js';
 import { MAIN_KITS } from './kits/registry.js';
+import { inSpawnDome } from './spawn-protect.js';
 
 const _v = new THREE.Vector3(), _v2 = new THREE.Vector3(), _fwd = new THREE.Vector3();
 const DOWN = new THREE.Vector3(0, -1, 0);
@@ -90,6 +91,10 @@ export class Actor {
     this.groundTeam = 0;         // 0 none, 1 own, 2 enemy
     this.respawnTimer = 0;
     this.invuln = 0;
+    // spawn protection (see SPAWN_PROTECT in config.js): position-derived, never a second stacking timer
+    this.spawnGrace = 0;         // seconds of protection left after leaving the dome (held at leaveGrace while inside)
+    this.inSpawnZone = false;    // standing inside your own team's dome right now
+    this._shieldSndT = 0;        // rate-limits the "ink bounced off the shield" sound
     this.lastDamage = 99; this.lastFire = 99; this.inkIdle = 0;
     this.damageFromInk = 0;
     this.hurtFlash = 0;
@@ -113,6 +118,7 @@ export class Actor {
     this.onEnemy = false;
     this._evSub = false; this._evEnemy = false; this._evClimb = false; this._evForm = 'kid';
     if (this.status) { this.status.track = 0; this.status.poison = 0; this.status.reveal = 0; this.status.shield = 0; }
+    this.spawnGrace = 0; this.inSpawnZone = false;
     this._jumpBeacon = null;
     this.weaponRunner?.reset();
   }
@@ -187,7 +193,7 @@ export class Actor {
   // ------------------------------------------------------------------ damage
   damage(amount, attacker, source = 'weapon') {
     if (!this.alive || amount <= 0) return false;
-    if (this.invuln > 0) return false;
+    if (this.protected) return false;
     if (this.specialActive && this.specialActive.armor) amount *= 0.25;
     if (G.specials) { amount = G.specials.filterDamage(this, amount, attacker, source); if (!(amount > 0)) return false; }
     { const K = MAIN_KITS[this.weapon?.kind]; if (K?.damageTaken) { amount = K.damageTaken(this.weaponRunner, amount, attacker, source); if (!(amount > 0)) return false; } }   // kit armour (e.g. the mitts' leap)
@@ -270,6 +276,7 @@ export class Actor {
     prev.fire = intent.fire; prev.jump = intent.jump; prev.sub = intent.sub; prev.special = intent.special; prev.squid = intent.squid;
 
     this.invuln = Math.max(0, this.invuln - dt);
+    this._updateSpawnProtect(dt);
     this.lastDamage += dt; this.lastFire += dt; this.landT += dt; this.kidT += dt;
     this.hurtFlash = Math.max(0, this.hurtFlash - dt * 0.6);
     this.inkWarnCd -= dt;
@@ -359,7 +366,7 @@ export class Actor {
 
     // ---- ink / hp
     if (onEnemy) {
-      if (this.damageFromInk < P.enemyInkDamageCap && this.invuln <= 0 && !(this.status.shield > 0)) {
+      if (this.damageFromInk < P.enemyInkDamageCap && !this.protected && !(this.status.shield > 0)) {
         const d = Math.min(P.enemyInkDps * dt, P.enemyInkDamageCap - this.damageFromInk);
         this.damageFromInk += d;
         this.hp = Math.max(1, this.hp - d);
@@ -700,7 +707,49 @@ export class Actor {
     }
   }
 
+  // ------------------------------------------------------------------ spawn protection
+  // One source of truth for "can this player be hurt": standing in your own spawn dome, or still inside the grace
+  // window that started when you stepped out of it. Deliberately POSITION-derived rather than a second timer that
+  // re-arms on respawn — two timers that feed each other is how a player ends up permanently unkillable, and the
+  // brief asks for coherence with the existing PLAYER.spawnInvuln rather than a second stack on top of it.
+  get protected() { return this.invuln > 0 || this.inSpawnZone || this.spawnGrace > 0; }
+
+  _updateSpawnProtect(dt) {
+    const P = SPAWN_PROTECT, pad = G.level?.spawnPads?.[this.team];
+    const was = this.inSpawnZone;
+    if (!pad) { this.inSpawnZone = false; this.spawnGrace = Math.max(0, this.spawnGrace - dt); return; }
+    const inside = inSpawnDome(this.pos, this.team);   // shared with the projectile field (spawn-protect.js)
+    this.inSpawnZone = inside;
+    if (inside) {
+      this.spawnGrace = P.leaveGrace;          // held at full while you stand in it, so leaving always grants the full 3 s
+      // quick recovery on the existing health/ink model — a respawn heal, not a new resource
+      if (this.hp < PLAYER.hp) this.hp = Math.min(PLAYER.hp, this.hp + P.hpRegen * dt);
+      if (this.ink < PLAYER.inkMax) { this.ink = Math.min(PLAYER.inkMax, this.ink + P.inkRegen * dt); this.inkIdle = 0; }
+    } else this.spawnGrace = Math.max(0, this.spawnGrace - dt);
+    if (inside !== was) this._spawnShieldFx(inside);
+  }
+
+  // Pooled FX only: a ring on the dome's edge going up and a column of light on the pad. Fired on the transition, not
+  // per frame, so a player loitering in spawn costs nothing.
+  _spawnShieldFx(inside) {
+    const pad = G.level?.spawnPads?.[this.team];
+    if (!pad) return;
+    const P = SPAWN_PROTECT;
+    if (inside) {
+      _v.set(pad.x, pad.y + 0.06, pad.z);
+      G.fx?.ring(_v, _v2.set(0, 1, 0), this.color, { radius: P.radius, life: 0.5, alpha: P.domeAlpha + 0.25, thickness: 1.6, snap: false });
+      G.fx?.pillar(_v, this.color, P.radius * 0.55, P.height, P.domeAlpha);
+      if (G.camera.position.distanceToSquared(_v) < 40 * 40) G.audio?.play('shield_up', { pos: this.isLocal ? undefined : this.pos, volume: this.isLocal ? 0.7 : 0.4 });
+    } else if (G.time - this._shieldSndT > 0.2) {
+      this._shieldSndT = G.time;
+      _v.set(this.pos.x, this.pos.y + 0.9, this.pos.z);
+      G.fx?.burst(_v, _v2.set(0, 1, 0), this.color, { count: 5, speed: 2.2, size: 0.06 });
+      if (G.camera.position.distanceToSquared(_v) < 30 * 30) G.audio?.play('shield_pop', { pos: this.isLocal ? undefined : this.pos, volume: 0.35 });
+    }
+  }
+
   // ------------------------------------------------------------------ wall climb
+  // (spawn protection lives just above _spawnBarrier; the dome's geometry query is in game/spawn-protect.js)
   _updateClimb(dt, isSquid) {
     const P = PLAYER;
     this.climbExit = Math.max(0, this.climbExit - dt);
@@ -1030,7 +1079,7 @@ export class Actor {
     a.ink = this.ink / PLAYER.inkMax;
     a.lowInk = this.ink < 18;
     a.special = this.specialFrac();
-    a.invuln = this.invuln > 0;
+    a.invuln = this.protected;   // the rig's spawn-shimmer follows the whole protection rule, not just the timer
     a.hp = clamp(this.hp / PLAYER.hp, 0, 1);
     a.inEnemyInk = !!this.onEnemy;
     a.surface = this.grounded ? this.groundTeam : 0;

@@ -92,6 +92,23 @@ export const PLAYER = {
   fireBuffer: 0.16,
 };
 
+// ---- Spawn protection (the dome over your own spawn pad) ----
+// Protection is POSITION-based, not a stacked timer: while you stand inside the dome you are protected, and the
+// moment you step out a single grace timer starts counting down. That keeps PLAYER.spawnInvuln (the respawn
+// invulnerability) coherent instead of additive — two independent timers re-arming each other is how a player ends
+// up permanently unkillable, so there is exactly one source of truth here and `Actor.protected` reads it.
+export const SPAWN_PROTECT = {
+  radius: 6.5,        // horizontal radius of the dome around your team's spawn pad, metres
+  height: 4.2,        // vertical reach: you are protected on the deck, not if you jump onto the roof above it
+  leaveGrace: 3.0,    // seconds of protection after leaving the dome (the brief's 3 s)
+  hpRegen: 55,        // hp/s inside the dome — a fresh spawn heals in about 2 s, so dying to a trade is impossible
+  inkRegen: 30,       // ink/s inside, faster than the normal kid-form refill (PLAYER.inkRefillKid)
+  intercept: true,    // hostile ink stops at the field instead of travelling through it
+  interceptSlow: 0.4, // ... and slows to this fraction of its speed for the frame it crosses
+  bounceVolume: 0.5,  // one 'shield_hit' every this many seconds of continuous contact, so a wall of ink doesn't machine-gun
+  domeAlpha: 0.28,    // the shield dome's opacity while you are inside it
+};
+
 // ---- Weapons ----
 // stats.* are 0..1 display bars for the loadout screen.
 export const WEAPONS = {
