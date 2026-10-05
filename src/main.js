@@ -665,8 +665,11 @@ class Game {
   _applyNight() {
     const k = G.env?.getSkyColors?.()?.night ?? 0;
     this.props?.setNight?.(k); this.decor?.setNight?.(k);
-    // dusk: lanterns bright enough to bloom, and they pool warm light on the deck around them
-    if (this.decor?.bulbMat) this.decor.bulbMat.emissiveIntensity *= 1 + 3.2 * k;
+    // dusk: lanterns bright enough to bloom, and they pool warm light on the deck around them.
+    // (compounding bug fixed: this used to be `*= 1 + 3.2 * k` on the live value — every stage
+    // rebuild / theme switch multiplied the already-boosted intensity again. The boost is now
+    // derived from the material's untouched 0.9 baseline, so repeated calls are idempotent.)
+    if (this.decor?.bulbMat) this.decor.bulbMat.emissiveIntensity = 0.9 * (1 + 3.2 * k);
     for (const m of [this.levelMat, this.grateMat]) setLevelLamps(m, G.level, k);
   }
 

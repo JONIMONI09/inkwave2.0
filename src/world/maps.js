@@ -85,7 +85,7 @@ export const HALYARD = {
     // tug up on blocks: deck = flank high ground, ramp up from the mid end, wheelhouse for cover
     B(14.5, 20.5, 0, 2.6, -24, -13, { tag: 'tug-hull', color: M.tug, pattern: PATTERN.hullpaint, notIn: 'zones' }),
     B(15.8, 19.2, 2.6, 4.3, -20.4, -17.4, { tag: 'tug-house', roof: true, color: M.tugHouse, pattern: PATTERN.hullpaint }),
-    R([17.5, 0, -7.6], [17.5, 2.6, -13], 2.2, { tag: 'tug-ramp', color: M.wood, pattern: PATTERN.rampboard, notIn: 'zones' }),
+    R([17.5, 0, -7.1], [17.5, 2.6, -13], 2.2, { tag: 'tug-ramp', color: M.wood, pattern: PATTERN.rampboard, notIn: 'zones' }),   // 23.8° (check-maps max 24) — same easing as the zones variant
     // Zone Control (the tug deck is each team's side zone): easier ways up for both sides
     //  • defenders: a steel boarding stair from the yard (quay side) straight up onto the bow
     //  • attackers: the stern ramp eased to 23.8° (it lands 0.45 m into a notch in the stern) and a two-step stack of
