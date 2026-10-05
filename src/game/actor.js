@@ -48,7 +48,10 @@ export class Actor {
     this.aimPoint = new THREE.Vector3();
     this.intent = { move: new THREE.Vector3(), jump: false, squid: false, fire: false, sub: false, special: false };
     this._prevIntent = { fire: false, sub: false, jump: false, special: false, squid: false };
-    this._squidPressT = -1; this._firePressT = -1;
+    this._squidPressT = -1; this._firePressT = -1; this._subPressT = -1;
+    // sub pressed while swimming: _subReq is the emergence window, _subFeed steps the synthesised press/release that
+    // runs the normal throw path once (0 none → 1 press → 2 release). See the form block in update().
+    this._subReq = 0; this._subFeed = 0;
     this.contacts = makeContacts();
     this.groundHit = new Hit();
     this.wallHit = new Hit();
@@ -99,6 +102,7 @@ export class Actor {
     this.coyote = 0;
     this.jumpBuffer = 0;
     this.fireBuffer = 0;
+    this._subReq = 0; this._subFeed = 0;
     this.kidT = 99;              // time since becoming a kid (emerge delay for the first shot)
     this.climbExit = 0;
     this.climbV = 0;
@@ -258,6 +262,7 @@ export class Actor {
     const prev = this._prevIntent;
     const firePressed = intent.fire && !prev.fire;
     const jumpPressed = intent.jump && !prev.jump;
+    const subPressed = intent.sub && !prev.sub;
     const subReleased = !intent.sub && prev.sub;
     const specialPressed = intent.special && !prev.special;
     if (intent.squid && !prev.squid) this._squidPressT = G.time;
@@ -284,8 +289,22 @@ export class Actor {
 
     // ---- form: squid while the swim button is held. Swim + fire both held → the most recent press wins, so diving
     // mid-spray and popping out of the ink to shoot both work instantly (the pop-out shot is buffered, never lost).
+    // Swim + sub → same arbitration, in the player's favour: a sub press while squid requests emergence (you can't
+    // throw a bomb from inside your own ink) and holds the body out for PLAYER.subEmergeWindow, so a quick tap still
+    // lands its throw instead of being swallowed. Bots arbitrate their own swim/throw (bots.js drops squid on a bomb
+    // aim), so they keep their tuning and never enter this window.
     const fireWins = (intent.fire || this.fireBuffer > 0) && this._firePressT >= this._squidPressT;
-    const wantSquid = intent.squid && !fireWins && !this.weaponRunner.busy() && !(spx && spx.noSquid);
+    if (subPressed) {
+      this._subPressT = G.time;
+      if (!this.bot && this.form === 'squid') { this._subReq = P.subEmergeWindow; this._subFeed = 0; }
+    }
+    if (this._subReq > 0) this._subReq = Math.max(0, this._subReq - dt);
+    if (this._subReq <= 0 && this.form !== 'squid') this._subFeed = 0;
+    // ... the release frame counts too: without it, letting go of SUB while still holding swim re-dives on the very
+    // frame the throw is read, and the bomb is swallowed.
+    const subOut = !this.bot && (this._subReq > 0 || this._subFeed > 0 || intent.sub
+      || (subReleased && this._subPressT >= this._squidPressT));
+    const wantSquid = intent.squid && !fireWins && !subOut && !this.weaponRunner.busy() && !(spx && spx.noSquid);
     if (wantSquid !== (this.form === 'squid')) {
       this.form = wantSquid ? 'squid' : 'kid';
       if (!wantSquid) this.kidT = 0;
@@ -373,7 +392,14 @@ export class Actor {
       pressed = firePressed || buffered;
       this.fireBuffer = 0;
     }
-    const winp = { fire, firePressed: pressed, sub: intent.sub && !isSquid, subReleased: subReleased && !isSquid };
+    // sub: a press made while swimming is honoured here — the synthesised press (this frame) and release (next) drive
+    // the ordinary throw path, so ink cost, kit refusals (SK.blocked), Barrage's own bomb and every lock still apply.
+    let subFeedPress = false, subFeedRelease = false;
+    if (!isSquid && this._subReq > 0 && this.kidT >= P.emergeDelay) {
+      if (this._subFeed === 0 && !intent.sub) { this._subFeed = 1; subFeedPress = true; }
+      else if (this._subFeed === 1) { this._subFeed = 2; subFeedRelease = true; this._subReq = 0; }
+    }
+    const winp = { fire, firePressed: pressed, sub: (intent.sub && !isSquid) || subFeedPress, subReleased: (subReleased && !isSquid) || subFeedRelease };
     const inkBefore = this.ink;
     // specials that replace the main weapon (zooka, stamp, blower, crab …) take the trigger; others may take the sub
     if (!(spx && G.specials.weapon(this, spx, dt, winp))) this.weaponRunner.update(dt, winp);

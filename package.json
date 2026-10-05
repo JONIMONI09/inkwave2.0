@@ -15,7 +15,7 @@
     "prepackage": "npm run -s check && npm run -s music",
     "bake": "electron build/bake-ao.cjs",
     "check-maps": "node build/check-maps.mjs",
-    "test": "node test/scoring.test.mjs",
+    "test": "node test/scoring.test.mjs && node test/results.test.mjs && node test/swimsub.test.mjs && node test/touch.test.mjs && node test/compat.test.mjs",
     "icon": "sh build/make-icon.sh",
     "botlab": "tools/botlab/run.sh tools/botlab/match.cjs",
     "smoke": "./tools/smoke.sh",

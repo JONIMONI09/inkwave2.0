@@ -480,6 +480,9 @@ function gearPath() {
 }
 /** Squid silhouette (64 box): pointed mantle, fins, four tentacles. Shared by GLYPHS.squidlet and the splashtag art. */
 export const SQUID_PATH = 'M32 3 C40 10 49 19 50 29 L44 31.5 L44 41 C44 44.5 42 46.5 39.5 46.5 L39.5 58 L35.5 53 L32 60 L28.5 53 L24.5 58 L24.5 46.5 C22 46.5 20 44.5 20 41 L20 31.5 L14 29 C15 19 24 10 32 3 Z';
+/** The same squid without the tentacle zigzag — the body GLYPHS.squidletSwim draws tentacles under separately
+ *  (one path each, so CSS can swim them) and so the body outline stays closed. */
+export const SQUID_BODY_PATH = 'M32 3 C40 10 49 19 50 29 L44 31.5 L44 41 C44 44.5 42 46.5 39.5 46.5 L24.5 46.5 C22 46.5 20 44.5 20 41 L20 31.5 L14 29 C15 19 24 10 32 3 Z';
 export const GLYPHS = {
   play: svg(`<path d="M21 12 L51 32 L21 52 Z" fill="currentColor" stroke="currentColor" stroke-width="7" stroke-linejoin="round"/>`),
   gear: svg(`<path d="${gearPath()}" fill="currentColor" stroke="currentColor" stroke-width="3" stroke-linejoin="round"/><circle cx="32" cy="32" r="8.5" fill="var(--k, #15121c)"/>`),
@@ -532,6 +535,11 @@ export const GLYPHS = {
   signal: svg(`<rect x="8" y="40" width="10" height="16" rx="3" fill="currentColor"/><rect x="27" y="28" width="10" height="28" rx="3" fill="currentColor"/><rect x="46" y="12" width="10" height="44" rx="3" fill="currentColor"/>`),
   // squid silhouette (lobby head-count pips, splashtag patterns): outlined in ink, eyes cut out
   squidlet: svg(`<path d="${SQUID_PATH}" fill="currentColor" stroke="var(--k, #15121c)" stroke-width="4" stroke-linejoin="round"/><circle cx="26.5" cy="36" r="3.4" fill="var(--k, #15121c)"/><circle cx="37.5" cy="36" r="3.4" fill="var(--k, #15121c)"/>`),
+  // squid with four individually animated tentacles (the loading bar's Inkling and the corner spinner): the body is
+  // one closed path, each tentacle its own <path class="iw-tent iw-tent--n"> so the swim wave is pure CSS.
+  squidletSwim: svg(`<g class="iw-tents">${[['M24 44 Q21 51 24.5 58'], ['M28.6 45 Q26.6 52 28.5 53'], ['M35.4 45 Q37.4 52 35.5 53'], ['M40 44 Q43 51 39.5 58']]
+    .map((d, i) => `<path class="iw-tent iw-tent--${i}" d="${d}" fill="none" stroke="currentColor" stroke-width="3.6" stroke-linecap="round"/>`).join('')}</g>` +
+    `<path d="${SQUID_BODY_PATH}" fill="currentColor" stroke="var(--k, #15121c)" stroke-width="4" stroke-linejoin="round"/><circle cx="26.5" cy="36" r="3.4" fill="var(--k, #15121c)"/><circle cx="37.5" cy="36" r="3.4" fill="var(--k, #15121c)"/>`),
 };
 
 /** Kill-feed / stat glyphs */

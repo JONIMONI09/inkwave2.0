@@ -18,6 +18,8 @@ export const isTouchDevice = () => {
   return ('ontouchstart' in window) || (navigator.maxTouchPoints > 0);
 };
 
+import { activeOrientation, entryToStyle, loadLayout } from './touch-layout.js';
+
 // screen px → fed into input.mouse.dx/dy (the controller applies 0.0021 rad/px × sensitivity)
 const LOOK_GAIN = 2.3;
 const STICK_RADIUS = 62;         // px of travel for a full-speed move
@@ -55,6 +57,7 @@ export class TouchControls {
     base.innerHTML = '<i class="tw-stick__ring"></i><i class="tw-stick__knob"></i>';
     this._stickBase = base;
     this._knob = base.querySelector('.tw-stick__knob');
+    this._zone = zone;
     this._bindStick(zone);
     zone.appendChild(base);
     root.appendChild(zone);
@@ -86,9 +89,44 @@ export class TouchControls {
     btn('tw-btn--sub', 'SUB', vk('KeyE').down, vk('KeyE').up);
     btn('tw-btn--special', 'SP', vk('KeyF').down, vk('KeyF').up);
     btn('tw-btn--cheer', 'C', vk('KeyC').down, vk('KeyC').up);
-    btn('tw-btn--map', 'MAP', () => { mapBtn.down(); this._aim.style.pointerEvents = 'none'; }, () => { mapBtn.up(); this._aim.style.pointerEvents = ''; });
+    btn('tw-btn--map', 'MAP', () => { mapBtn.down(); this._setMapMode(true); }, () => { mapBtn.up(); this._setMapMode(false); });
     btn('tw-btn--pause', 'II', () => this.onPause(), () => {});
     return root;
+  }
+
+  // the layout follows rotation (portrait and landscape are stored separately)
+  bindOrientation() {
+    const re = () => { if (this.visible || this._el.classList.contains('is-on')) this.applyLayout(this.layout); };
+    addEventListener('resize', re);
+    addEventListener('orientationchange', re);
+    this._unbindOrient = () => { removeEventListener('resize', re); removeEventListener('orientationchange', re); };
+    return this;
+  }
+
+  // While the map is held the whole screen belongs to the map: the look surface AND the movement zone hand their taps
+  // back, so the diorama's Super-Jump pins (src/ui/diorama.js) can be tapped directly. The stick keeps its position.
+  _setMapMode(on) {
+    this._aim.style.pointerEvents = on ? 'none' : '';
+    this._zone.style.pointerEvents = on ? 'none' : '';
+    this._el.classList.toggle('is-map', on);
+  }
+
+  // The player's own layout (Settings → Touch layout): normalized positions, size and opacity per control, stored
+  // per orientation. Applied on boot and again whenever the device rotates — the CSS defaults are the fallback, and
+  // safe-area insets stay in the stylesheet.
+  applyLayout(layout) {
+    this.layout = layout || loadLayout();
+    const orient = activeOrientation();
+    this._orient = orient;
+    for (const b of this._buttons) {
+      const id = (b.className.match(/tw-btn--(\w+)/) || [])[1];
+      const e = this.layout[orient] && this.layout[orient][id];
+      if (!e) continue;   // unknown control (or a layout written by an older build): keep the CSS position
+      b.style.cssText = entryToStyle(e);
+      b.dataset.tid = id;
+    }
+    this._el.classList.add('is-custom');
+    return orient;
   }
 
   // ---- left-thumb movement stick (dynamic anchor: spawns wherever the thumb lands)
@@ -168,10 +206,10 @@ export class TouchControls {
     this.input.mouse.left = false;
     this.input.moveAxis.x = 0; this.input.moveAxis.y = 0;
     this._moveId = this._lookId = null;
-    this._aim.style.pointerEvents = '';
+    this._setMapMode(false);
     this._stickBase.classList.remove('is-on');
     for (const b of this._buttons) b.classList.remove('is-down');
   }
 
-  dispose() { this._el.remove(); }
+  dispose() { this._unbindOrient?.(); this._el.remove(); }
 }

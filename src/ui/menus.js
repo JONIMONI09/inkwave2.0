@@ -25,8 +25,11 @@ import {
 } from './menu-art.js';
 import { bossSilhouette, bossEmblem, BOSS_GLYPH, BOSS_NAME, BOSS_EPITHET } from './boss-art.js';
 import { WhatsNew } from './news.js';
+// Touch-layout editor (Settings → Touch layout). The record itself lives in core/touch-layout.js; the menus only
+// read/write it so the store stays the single source of truth for the versioned key and its clamps.
+import { TOUCH_CONTROLS, DEFAULT_LAYOUT, MIN_SIZE, MAX_SIZE, MIN_OPACITY, loadLayout, saveLayout, clearLayout, activeOrientation } from '../core/touch-layout.js';
 
-const SCREENS = ['loading', 'title', 'main', 'mode', 'loadout', 'setup', 'locker', 'settings', 'howto', 'credits', 'pause', 'results', 'online', 'lobby'];
+const SCREENS = ['loading', 'title', 'main', 'mode', 'loadout', 'setup', 'locker', 'settings', 'touchedit', 'howto', 'credits', 'pause', 'results', 'online', 'lobby'];
 // Transitions that get the full-screen ink wipe (the rest use staggered pop-ins).
 const WIPES = new Set(['loading>title', 'title>main', 'results>main', 'pause>main', 'results>null', 'pause>title', 'online>lobby', 'lobby>online', 'lobby>main', 'results>lobby', 'pause>online']);
 // Pushes/pops between these get the light ink swipe (decorative — the swap itself is immediate).
@@ -176,6 +179,10 @@ const SETTINGS_TABS = [
     { key: 'aimAssistMouse', label: 'Aim assist for mouse', type: 'toggle', help: 'Also apply a lighter aim assist when aiming with a mouse. Off by default.' },
     { key: '_howto', label: 'Controls reference', type: 'link', help: 'Every keyboard, mouse and controller binding in one place.' },
   ] },
+  { id: 'touch', label: 'Touch', icon: 'gamepad', rows: [
+    { key: '_touchedit', label: 'Touch layout', type: 'touchedit', help: 'Drag the on-screen buttons where your thumbs are, make them bigger or dimmer. Portrait and landscape are edited separately.' },
+    { key: '_touchreset', label: 'Reset touch layout', type: 'touchreset', help: 'Put every button back where the game ships it.' },
+  ] },
   { id: 'video', label: 'Video', icon: 'monitor', rows: [
     { key: 'quality', label: 'Graphics quality', type: 'seg', options: [['potato', 'Lite'], ['low', 'Low'], ['medium', 'Med'], ['high', 'High'], ['ultra', 'Ultra']], help: 'Resolution scale, shadow detail, anti-aliasing and particle counts. Lite is for phones, tablets and struggling GPUs.' },
     { key: 'fov', label: 'Field of view', type: 'slider', min: 65, max: 100, step: 1, fmt: (v) => Math.round(v) + '°', help: 'Wider shows more of the turf around you.' },
@@ -202,6 +209,7 @@ const SETTINGS_TABS = [
 ];
 const TAB_BLURB = {
   controls: 'Look speed, invert, aim assist and the full control reference.',
+  touch: 'On-screen controls: rearrange the buttons, resize and dim them for your thumbs.',
   video: 'Quality tier, field of view and screen effects.',
   audio: 'Master, music and sound-effect levels.',
   gameplay: 'Shake, vibration, colour-safe inks, minimap and match defaults.',
@@ -403,6 +411,33 @@ export class Menus {
     return p;
   }
 
+  // ---- corner "busy" spinner ----------------------------------------------------------
+  // For the work that happens *behind* an already-visible screen (building a match, warming a showcase, joining a
+  // lobby): the player keeps their place and gets one small squid in the corner instead of a full takeover. The
+  // anti-flicker is the point — a 40 ms shader compile must not flash a spinner, so it only appears after ~250 ms
+  // and, once shown, is held for a minimum so it never strobes on and off.
+  showBusy(label) {
+    this._busyWant = true;
+    if (!this._busyEl) {
+      this._busyEl = h('i', { class: 'iw-busy', html: GLYPHS.squidletSwim, 'aria-hidden': 'true' });
+      this.el.appendChild(this._busyEl);
+    }
+    if (this._busyOnAt) return;                       // already spinning
+    clearTimeout(this._busyIn);
+    this._busyIn = setTimeout(() => { if (this._busyWant) { this._busyOnAt = performance.now(); this._busyEl.classList.add('is-on'); } }, 250);
+    safeCall(() => this._busyEl && this._busyEl.setAttribute('title', label || 'Working…'));
+  }
+
+  hideBusy() {
+    this._busyWant = false;
+    clearTimeout(this._busyIn);
+    if (!this._busyEl || !this._busyOnAt) return;
+    const held = performance.now() - this._busyOnAt;
+    clearTimeout(this._busyOut);
+    const drop = () => { if (!this._busyWant) { this._busyEl.classList.remove('is-on'); this._busyOnAt = 0; } };
+    if (held < 700) this._busyOut = setTimeout(drop, 700 - held); else drop();
+  }
+
   /** Optional: menu accent inks (e.g. the attract-mode palette). Defaults to the first team palette / colorblind palette. */
   setAccent(a, b) {
     this._accentExternal = true;
@@ -420,6 +455,7 @@ export class Menus {
 
   dispose() {
     cancelAnimationFrame(this._raf);
+    clearTimeout(this._busyIn); clearTimeout(this._busyOut);   // a live timer would resurrect the spinner node
     this.wipe.cancel();
     this.el.remove();
   }
@@ -827,10 +863,144 @@ export class Menus {
   }
   _panel(cls, ...kids) { return h('div', { class: `iw-panel ${cls || ''}` }, ...kids); }
 
+  // ================================================================================== SCREEN: touch layout editor
+  // Settings → Touch → Touch layout. The device card on the right mirrors the orientation it edits and carries the
+  // real `.tw-btn` look, so the arrangement on screen is the arrangement you play with. Drag a button to place it,
+  // the sliders size / dim the selection; positions are stored as viewport fractions per orientation
+  // (core/touch-layout.js) and pushed straight into the live touch layer, so nothing has to be "applied".
+  _resetTouchLayout() {
+    const rec = clearLayout();
+    this._touchLayout = rec;
+    safeCall(() => this.api.setTouchLayout && this.api.setTouchLayout(rec));
+    this.toast('Touch layout reset to the default', { icon: GLYPHS.reset });
+  }
+
+  _scr_touchedit() {
+    const L = this._touchLayout || (this._touchLayout = safeCall(() => this.api.getTouchLayout && this.api.getTouchLayout()) || loadLayout());
+    let orient = safeCall(() => this.api.touchOrientation && this.api.touchOrientation()) || activeOrientation();
+    const stage = h('div', { class: 'iw-tle__stage' });
+    const sel = { id: 'fire' };
+    const sizeVal = h('span', { class: 'iw-tle__val' });
+    const opaVal = h('span', { class: 'iw-tle__val' });
+    const selName = h('b', null, 'FIRE');
+    const selHint = h('small', null, 'Hold to charge');
+    const els = {};                       // id → the on-stage button
+    const sliders = {};                   // 's' / 'o' → the range inputs (kept so a new selection resyncs them)
+
+    // every change goes through here: mutate, persist, hand the record to the live layer, redraw the card
+    const commit = (fn, quiet) => { fn(); saveLayout(L); safeCall(() => this.api.setTouchLayout && this.api.setTouchLayout(L)); if (!quiet) place(); };
+    const setEntry = (id, patch) => commit(() => Object.assign(L[orient][id], patch));
+
+    const orientBtn = this._btn({ id: 'tori', label: orient === 'portrait' ? 'PORTRAIT' : 'LANDSCAPE', icon: GLYPHS.rotate,
+      cls: 'iw-btn--ghost iw-btn--small', sound: 'ui_toggle', accept: () => { orient = orient === 'portrait' ? 'landscape' : 'portrait'; build(); } });
+
+    // ---- drag: grabbing a button (or the space around one) picks it up and follows the finger.
+    // Pointer capture keeps the drag alive when the finger leaves the card, which is the normal way you drag.
+    let drag = null;
+    const stageXY = (e) => { const r = stage.getBoundingClientRect(); return [(e.clientX - r.left) / r.width, (e.clientY - r.top) / r.height]; };
+    const grab = (e) => {
+      const [x, y] = stageXY(e);
+      // a press straight on a button always means that button; a press on empty space grabs the nearest one
+      const on = e.target && e.target.dataset && e.target.dataset.tw;
+      let id = on || null;
+      if (!id) {
+        let bd = 0.18;
+        for (const c of TOUCH_CONTROLS) { const p = L[orient][c.id]; const d = Math.hypot(p.x - x, p.y - y); if (d < bd) { bd = d; id = c.id; } }
+      }
+      if (!id) return;
+      e.preventDefault();
+      drag = { id, dx: L[orient][id].x - x, dy: L[orient][id].y - y };
+      try { stage.setPointerCapture(e.pointerId); } catch { /* capture is a nicety, the drag works without it */ }
+      if (sel.id !== id) { sel.id = id; this._sfx('ui_toggle', 0.05); }
+      place();
+    };
+    stage.addEventListener('pointerdown', grab);
+    stage.addEventListener('pointermove', (e) => {
+      if (!drag) return;
+      const [x, y] = stageXY(e);
+      // clamp inside the card: a control can never end up off-screen or under a bezel
+      L[orient][drag.id].x = Math.max(0.04, Math.min(0.96, x + drag.dx));
+      L[orient][drag.id].y = Math.max(0.04, Math.min(0.96, y + drag.dy));
+      place();
+    });
+    const drop = (e) => {
+      if (!drag) return;
+      try { stage.releasePointerCapture(e.pointerId); } catch { /* already gone */ }
+      drag = null;
+      commit(() => {}, true);            // the move already mutated L; this only persists + pushes it live
+      this._sfx('ui_confirm', 0.05);
+    };
+    stage.addEventListener('pointerup', drop);
+    stage.addEventListener('pointercancel', drop);
+
+    // ---- card
+    const place = () => {
+      stage.classList.toggle('is-portrait', orient === 'portrait');
+      for (const c of TOUCH_CONTROLS) {
+        const p = L[orient][c.id], el = els[c.id];
+        if (!el) continue;
+        el.style.left = `${(p.x * 100).toFixed(2)}%`;
+        el.style.top = `${(p.y * 100).toFixed(2)}%`;
+        el.style.scale = String(p.s);
+        el.style.opacity = String(p.o);
+        el.classList.toggle('is-sel', c.id === sel.id);
+      }
+      const s = L[orient][sel.id], meta = TOUCH_CONTROLS.find((c) => c.id === sel.id);
+      sizeVal.textContent = `${Math.round(s.s * 100)}%`;
+      opaVal.textContent = `${Math.round(s.o * 100)}%`;
+      selName.textContent = meta.label;
+      selHint.textContent = meta.hint;
+      if (sliders.s) sliders.s.value = String(s.s);        // a new selection must show its own numbers
+      if (sliders.o) sliders.o.value = String(s.o);
+      const lbl = orientBtn.querySelector('.iw-btn__label');
+      if (lbl) lbl.textContent = orient === 'portrait' ? 'PORTRAIT' : 'LANDSCAPE';
+    };
+    const build = () => {
+      stage.innerHTML = '';
+      stage.classList.toggle('is-portrait', orient === 'portrait');
+      // the card symbol up top: the device you are editing, with the game's own squid for company
+      stage.append(h('div', { class: 'iw-tle__card' }, h('i', { html: GLYPHS.squidletSwim }), h('small', null, orient === 'portrait' ? 'PORTRAIT' : 'LANDSCAPE')));
+      // the left-thumb movement zone, drawn where it really is so people keep the buttons out of it
+      stage.append(h('div', { class: 'iw-tle__stick' }, h('small', null, 'MOVE')));
+      for (const c of TOUCH_CONTROLS) {
+        const el = h('div', { class: 'tw-btn iw-tle__btn', 'data-tw': c.id }, c.label);
+        els[c.id] = el;
+        stage.appendChild(el);
+      }
+      place();
+    };
+    build();
+
+    const slider = (key, label, val, onChange, valEl) => {
+      const input = h('input', { type: 'range', min: String(key === 's' ? MIN_SIZE : MIN_OPACITY), max: String(key === 's' ? MAX_SIZE : 1),
+        step: key === 's' ? '0.05' : '0.02', value: String(val) });
+      sliders[key] = input;
+      input.addEventListener('input', () => onChange(+input.value));
+      return h('label', { class: 'iw-tle__slider' }, h('span', null, label, valEl), input);
+    };
+
+    const panel = this._panel('iw-tle iw-in',
+      h('div', { class: 'iw-tle__head' }, h('i', { html: GLYPHS.gamepad }), h('b', null, 'TOUCH LAYOUT'), h('small', null, 'Drag a button, then size or dim it')),
+      h('div', { class: 'iw-tle__sel' }, h('b', null, selName), h('small', null, selHint)),
+      slider('s', 'SIZE', L[orient][sel.id].s, (v) => setEntry(sel.id, { s: v }), sizeVal),
+      slider('o', 'OPACITY', L[orient][sel.id].o, (v) => setEntry(sel.id, { o: v }), opaVal),
+      h('div', { class: 'iw-tle__foot' }, orientBtn,
+        this._btn({ id: 'tlreset', label: 'RESET', icon: GLYPHS.reset, cls: 'iw-btn--ghost iw-btn--small', sound: 'ui_toggle',
+          accept: () => { commit(() => { L[orient] = JSON.parse(JSON.stringify(DEFAULT_LAYOUT[orient])); }, true); this._sfx('ui_confirm'); build(); } }),
+        this._btn({ id: 'tldone', label: 'DONE', icon: GLYPHS.check, cls: 'iw-btn--primary iw-btn--small',
+          accept: () => { commit(() => {}, true); this._sfx('ui_confirm'); this._go('settings', { back: true }); } })));
+    const el = h('div', { class: 'iw-screen iw-touchedit' },
+      h('div', { class: 'iw-scrim-left' }),
+      this._header('TOUCH LAYOUT', { sub: 'Portrait and landscape are saved separately' }),
+      panel, stage,
+      this._prompts([[['←', '→'], 'DPad', 'Choose'], ['Esc', 'B', 'Back']]));
+    return { el, wrap: true, initial: () => panel.querySelector('[data-nav]'), onBack: () => { this._go('settings', { back: true }); } };
+  }
+
   // ================================================================ SCREEN: loading
   _scr_loading() {
     const fill = h('div', { class: 'iw-progress__fill' }, h('i', { class: 'iw-progress__wave' }), h('i', { class: 'iw-progress__edge' }));
-    const squid = h('i', { class: 'iw-progress__squid', html: GLYPHS.squidlet });   // swims along the fill edge
+    const squid = h('i', { class: 'iw-progress__squid', html: GLYPHS.squidletSwim });   // swims along the fill edge, tentacles and all
     const pctEl = h('span', { class: 'iw-progress__pct' }, '0%');
     const label = h('div', { class: 'iw-loading__label' }, this._loading.label);
     const tipText = h('div', { class: 'iw-tip__text' });
@@ -2101,6 +2271,8 @@ export class Menus {
       tab.rows.forEach((r, i) => {
         let ctrl;
         if (r.type === 'link') ctrl = { el: h('span', { class: 'iw-row__link' }, 'VIEW', h('i', { html: GLYPHS.next })), accept: () => { this._sfx('ui_click'); this._go('howto'); } };
+        else if (r.type === 'touchedit') ctrl = { el: h('span', { class: 'iw-row__link' }, 'EDIT', h('i', { html: GLYPHS.pencil })), accept: () => { this._sfx('ui_click'); this._go('touchedit'); } };
+        else if (r.type === 'touchreset') ctrl = { el: h('span', { class: 'iw-row__link' }, 'RESET', h('i', { html: GLYPHS.reset })), accept: () => { this._sfx('ui_toggle'); this._resetTouchLayout(); } };
         else if (r.type === 'slider') ctrl = this._slider(r, s[r.key]);
         else if (r.type === 'toggle') ctrl = this._toggle(r, s[r.key]);
         else {
@@ -2110,12 +2282,13 @@ export class Menus {
           ctrl = this._seg(options, s[r.key], (v) => this._setSetting(r.key, v));
           ctrl.accept = ctrl.cycle;
         }
-        const row = h('div', { class: 'iw-row iw-rowin' + (r.type === 'link' ? ' iw-row--link' : ''), style: { '--i': i, '--dir': dirSign } },
+        const linkish = r.type === 'link' || r.type === 'touchedit' || r.type === 'touchreset';
+        const row = h('div', { class: 'iw-row iw-rowin' + (linkish ? ' iw-row--link' : ''), style: { '--i': i, '--dir': dirSign } },
           h('div', { class: 'iw-row__label' }, h('i', { class: 'iw-row__pip' }), r.label),
           h('div', { class: 'iw-row__ctrl' }, ctrl.el));
         row._key = r.key;
         this._bind(row, { id: 'set-' + r.key, type: 'row', accept: ctrl.accept, adjust: ctrl.adjust });
-        if (r.type !== 'link') controls.set(r.key, ctrl);
+        if (!linkish) controls.set(r.key, ctrl);
         rowsEl.appendChild(row);
       });
     };

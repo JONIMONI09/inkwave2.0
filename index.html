@@ -20,6 +20,24 @@
   #ui-root { position: fixed; inset: 0; pointer-events: none; z-index: 10; }
   #fade { position: fixed; inset: 0; background: #0d1020; opacity: 1; pointer-events: all; z-index: 50; transition: opacity 600ms ease; }
   #boot-error { display: none; position: fixed; left: 50%; top: 50%; transform: translate(-50%, -50%); z-index: 60; color: #fff; font: 600 16px/1.4 system-ui, sans-serif; background: #c0263d; padding: 16px 20px; border-radius: 12px; max-width: 520px; }
+
+  /* Inline boot splash — exists in the HTML so there is something to look at during the seconds between the
+     first paint and the moment main.js has parsed, imported three.js and mounted the loading screen. Without it the
+     player stares at an opaque #fade and cannot tell a slow phone from a hang. Self-contained on purpose (inline
+     styles, no class names from ui.css) so it never depends on the module graph having loaded. */
+  #boot { position: fixed; inset: 0; z-index: 55; display: grid; place-content: center; justify-items: center;
+    gap: 22px; pointer-events: none; background: radial-gradient(120% 90% at 50% 42%, #17203c, #0d1020 70%); color: #fff;
+    transition: opacity 320ms ease; }
+  #boot.is-out { opacity: 0; pointer-events: none; }
+  #boot b { font: 900 clamp(30px, 8vmin, 74px)/1 'Rubik', system-ui, sans-serif; letter-spacing: .16em;
+    color: #ff8a14; text-shadow: 0 3px 0 #15121c, 0 0 26px rgba(255, 138, 20, .35); }
+  #boot-track { width: min(58vw, 340px); height: 12px; border-radius: 99px; overflow: hidden;
+    background: rgba(255, 255, 255, .12); box-shadow: inset 0 2px 5px rgba(0, 0, 0, .5); }
+  #boot-fill { display: block; height: 100%; width: 42%; border-radius: 99px; background: linear-gradient(90deg, #ff8a14, #ffd23f);
+    animation: boot-slide 1.15s ease-in-out infinite; }
+  #boot small { font: 600 13px/1 'Rubik', system-ui, sans-serif; letter-spacing: .22em; opacity: .6; }
+  @keyframes boot-slide { 0% { margin-left: -46%; } 100% { margin-left: 104%; } }
+  @media (prefers-reduced-motion: reduce) { #boot-fill { animation: none; margin-left: 0; width: 100%; opacity: .6; } }
 </style>
 <script type="importmap">
 { "imports": { "three": "./vendor/three/build/three.module.js", "three/addons/": "./vendor/three/jsm/" } }
@@ -30,9 +48,18 @@
 <div id="ui-root"></div>
 <div id="fade"></div>
 <div id="boot-error"></div>
+<div id="boot"><b>INKWAVE</b><div id="boot-track"><i id="boot-fill"></i></div><small>INKING THE ARENA</small></div>
 <script>
-  // fade in once the loading screen is mounted
+  // The splash covers the dead time before main.js mounts the loading screen, then hands over: it goes out only once
+  // #ui-root actually has a screen in it, so the two never show at once and the swap is never a black flash.
   window.addEventListener('DOMContentLoaded', () => setTimeout(() => { const f = document.getElementById('fade'); if (f) { f.style.opacity = '0'; f.style.pointerEvents = 'none'; } }, 60));
+  window.inkwaveBootDone = function () {
+    const b = document.getElementById('boot'); if (!b || b.dataset.gone) return; b.dataset.gone = '1';
+    b.classList.add('is-out'); setTimeout(() => b.remove(), 400);
+  };
+  // Safety net: if the module graph never arrives (offline, blocked import, a parse error), the splash stops lying
+  // about being busy after 25 s instead of animating forever.
+  setTimeout(() => { const b = document.getElementById('boot'); if (b && !b.dataset.gone) { const s = b.querySelector('small'); if (s) s.textContent = 'STILL LOADING…'; } }, 25000);
 </script>
 <script type="module" src="./src/main.js"></script>
 </body>

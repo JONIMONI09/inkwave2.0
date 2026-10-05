@@ -79,6 +79,10 @@ export class DioramaOverlay {
     this.plan = h('div', { class: 'iw-dio-plan' },
       h('span', { class: 'iw-dio-plan__ring' }, this.planN, h('small', null, 'RESPAWN')),
       h('span', { class: 'iw-dio-plan__txt' }, this.planT, this.planS));
+    // touch: a transparent catcher over the pins so a tap picks a Super Jump target (the desktop path is a locked
+    // pointer + click). Only armed on touch devices while the map is up, so mouse/keyboard/gamepad are untouched.
+    this.tapLayer = h('div', { class: 'iw-dio__tap' });
+    this.tapLayer.addEventListener('pointerdown', (e) => this._tap(e));
     this.el = h('div', { class: 'iw-dio', 'aria-hidden': 'true' },
       h('div', { class: 'iw-dio__tilt iw-dio__tilt--top' }), h('div', { class: 'iw-dio__tilt iw-dio__tilt--bot' }),
       h('div', { class: 'iw-dio__vig' }),
@@ -87,6 +91,7 @@ export class DioramaOverlay {
       h('div', { class: 'iw-dio__pins' }, this.pins.map((p) => p.el)),
       // (over the pins: what you just splatted is usually right in front of you — under your own badge)
       h('div', { class: 'iw-dio__dms' }, this.dms.map((d) => d.el)),
+      this.tapLayer,
       this.cursor,
       h('div', { class: 'iw-dio__head' }, h('small', { class: 'iw-dio__kicker' }, 'STAGE MAP'), this.title, this.when),
       this.plan,
@@ -116,6 +121,9 @@ export class DioramaOverlay {
     const was = this.on;
     this.k = k;
     this.on = k > 0.002;
+    // the tap catcher only exists on touch devices (and only while the map is up — see the CSS)
+    const touch = !!G.input?.touchOnly;
+    if (touch !== this._touch) { this._touch = touch; this.el.classList.toggle('is-touch', touch); if (touch) this._head(); }
     if (this.on !== was) {
       this.el.classList.toggle('is-on', this.on);
       document.body.classList.toggle('iw-dio-on', this.on);
@@ -361,17 +369,43 @@ export class DioramaOverlay {
     el.classList.remove('is-press'); void el.offsetWidth; el.classList.add('is-press');
   }
 
+  // A touch tap on the map: pick the nearest jumpable pin under the finger (finger-sized reach), park the map cursor
+  // there so the arc preview follows, then run the SAME selection path as a click (queue while splatted, jump when
+  // alive). The aim surface is already pointer-disabled while MAP is held, so this never aims or fires.
+  _tap(e) {
+    if (!this.on || this.k <= 0.7 || !G.input?.touchOnly) return;
+    e.preventDefault();
+    const r = this.el.getBoundingClientRect();
+    const x = e.clientX - r.left, y = e.clientY - r.top;
+    const reach = Math.max(56, Math.min(innerWidth, innerHeight) * 0.1);   // a thumb-sized target
+    let best = -1, bd = reach;
+    for (let i = 0; i < NPIN; i++) {
+      if (i === 4) continue;                                    // your own arrow is not a jump target
+      const p = this.pins[i];
+      if (!p.vis) continue;
+      const d = Math.hypot(p.x - x, p.y - y);
+      if (d < bd) { bd = d; best = i; }
+    }
+    this.cx = clamp(x / Math.max(1, r.width), 0.02, 0.98);
+    this.cy = clamp((y - 34) / Math.max(1, r.height), 0.04, 0.96);
+    this.hasCursor = true;
+    if (best >= 0) { this.hover = best; this._jump(best, G.match?.local); }
+  }
+
   _head() {
     const m = G.game?.mapDef;
     this.title.textContent = (m?.name || 'Stage').toUpperCase();
     this.when.textContent = G.game?.time === 'dusk' ? 'DUSK' : 'DAY';
     const pad = G.input?.lastDevice === 'pad';
     const plan = !!this._planning;
+    const touch = !!G.input?.touchOnly;
     this.foot.innerHTML = pad
       ? richText(plan ? 'Right stick to point · A or D-pad to plan your Super Jump · release VIEW to close' : 'Right stick to point · A or D-pad to Super Jump · release VIEW to close')
-      : `${keycap('1')}${keycap('2')}${keycap('3')} <span>${plan ? 'Plan a jump to a teammate' : 'Super Jump to a teammate'}</span> ${keycap('4')} <span>${plan ? 'Base (no jump)' : 'Base'}</span>` +
-        (G.match?.local && beaconsOf(G.match.local.team).length ? ` ${keycap('5')}–${keycap('0')} <span>Beacons</span>` : '') +
-        ` <em>·</em> <span>Point + click a pin</span> <em>·</em> <span>release</span> ${keycap('TAB')}`;
+      : touch
+        ? richText(plan ? 'Tap a teammate to plan your Super Jump · hold MAP to keep it open' : 'Tap a teammate, base or beacon to Super Jump · hold MAP to keep it open')
+        : `${keycap('1')}${keycap('2')}${keycap('3')} <span>${plan ? 'Plan a jump to a teammate' : 'Super Jump to a teammate'}</span> ${keycap('4')} <span>${plan ? 'Base (no jump)' : 'Base'}</span>` +
+          (G.match?.local && beaconsOf(G.match.local.team).length ? ` ${keycap('5')}–${keycap('0')} <span>Beacons</span>` : '') +
+          ` <em>·</em> <span>Point + click a pin</span> <em>·</em> <span>release</span> ${keycap('TAB')}`;
   }
 
   // death markers: a squid-skull in the victim's ink on the spot, fading with the record (main.js G.deathMarks)

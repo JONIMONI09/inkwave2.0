@@ -67,6 +67,14 @@ buttons. Everything feeds the same input pipeline as the keyboard/gamepad, so al
 and Super Jumps work the same way. Open the URL with `?no-touch` to hide the layer on a
 touch-screen laptop.
 
+**Rearranging the buttons.** *Settings → Touch → Touch layout* opens an editor: a card that mirrors
+your phone (portrait and landscape are edited separately and saved separately), the real in-game
+buttons on it, drag one wherever your thumb is, then size or dim it with the sliders. The layout is
+stored under the versioned `inkwave.touchLayout` key as viewport fractions, so it survives a
+different screen size sensibly and a rotation swaps to the other set instead of mirroring it. *Reset
+touch layout* puts everything back. While MAP is held the whole screen belongs to the map, so
+tapping a teammate's arrow Super Jumps to them without the movement zone swallowing the tap.
+
 ## Playing online
 
 From the main menu choose **Online**, then **Create a room** and send your friends the code (or **Join a room** and
@@ -147,6 +155,12 @@ Regression tests for the scoring rules: `npm test` (headless, no GPU).
 ## Browser support
 
 Chrome and Edge are the target; Firefox works. Safari runs but is slower. A discrete or recent integrated GPU is recommended for the High preset; the settings menu has Medium, Low and Lite tiers.
+
+Graphics capabilities are **probed, never sniffed**: at boot the game asks the driver whether it can
+render half-float colour targets, filter them, compile shaders in parallel, and how much MSAA it
+accepts, and the answer is logged once (`__inkwave.R.capsLine`). Without renderable half-float — older
+Firefox on Linux, software GL — the post chain drops to an 8-bit target and bloom switches itself off
+instead of rendering black.
 
 **Performance on phones and weak GPUs.** On a touch device the first launch picks the **Lite**
 preset automatically: render density well below CSS-pixel resolution (the single biggest lever on
