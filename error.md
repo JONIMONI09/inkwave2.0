@@ -5,6 +5,43 @@ keep the format below. Update alongside `session.md`.
 
 ---
 
+## E-007 · CI smoke job fails on every run: sim cannot reach `playing` at ~1 rendered fps
+
+**Status:** fix pushed, CI verification pending (2026-10-05)
+
+### What happens
+The `smoke` job (headless Chrome + SwiftShader, `tools/smoke.sh`) fails on every CI run — including all runs on
+`main` since the workflow was added. Log signature: `until timeout … match.state==="playing"`, then
+`smoke -> {"state":"intro", "boot":72000–126000, "fps":0–1}` → `SMOKE FAIL`.
+
+### Root cause — confirmed (runner logs, source, local headless probe)
+Wall-clock vs sim-time mismatch. The smoke polled the *live* page (`waitForFunction`) while the game advanced only
+through its rendered rAF loop. On CI's software WebGL a frame takes ~1 s, and `_loop()` clamps sim time to 1/24 s
+per rendered frame (`dt = Math.min(dt, 1/24)`, a hitch guard for real GPUs). The 4.2 s intro therefore needs ~100
+rendered frames (~100 s) *after* a 72–126 s boot — the 300 s `UNTIL_MS` budget expires in state `intro`. The game
+logic is correct; the test measured the wrong clock.
+
+### Solution path
+Make the smoke fps-independent using the game's existing audit machinery: `__inkwave.debug.freeze()` stops the rAF
+loop and `debug.step(ms)` advances the simulation at a fixed 60 Hz (rendering included) — the same hook
+`tools/stage-shots.mjs` uses. The smoke now steps until `state === 'playing'` (guard: 300 steps), then steps 8 s of
+live play, then asserts as before (no console/page errors, results printed). Steps moved to `tools/smoke-steps.json`
+(play.mjs takes a file path), eliminating the inline-JSON quoting. `?shadercheck` is kept so a broken shader still
+fails loudly. No game code changed.
+
+### Verification
+`sh -n tools/smoke.sh` → ok; steps JSON parses. Local run in this WebGL-less container fails exactly as designed
+(`[error] WebGL context could not be created` → `SMOKE FAIL`, exit 1), proving the failure detection is intact. The
+pass path could NOT be verified locally (no GL here at all, SwiftShader context creation fails); it is verified by
+the CI run this push triggers.
+
+### Prevention
+Any test that depends on a *rendered* frame loop inherits the renderer's fps. Deterministic stepping (`debug.step`)
+is the contract for sim assertions; reserve `waitForFunction` for things that genuinely live outside the sim
+(assets, menus on real time). Budget CI time for boot separately from sim progress — they are independent clocks.
+
+---
+
 ## E-006 · Results screen never appears: dead `judgeP ||` fallback in `_judge()`
 
 **Status:** resolved (2026-10-05)

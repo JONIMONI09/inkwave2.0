@@ -1,0 +1,6 @@
+[
+  { "until": "window.__inkwave && __inkwave.match && __inkwave.match.local && __inkwave.debug" },
+  { "eval": "__inkwave.debug.freeze(); let n = 0; while (__inkwave.match.state !== 'playing' && n++ < 300) __inkwave.debug.step(100); __inkwave.match.state", "log": "intro-stepped" },
+  { "eval": "__inkwave.debug.step(8000); __inkwave.match.state", "log": "played" },
+  { "eval": "JSON.stringify({state:__inkwave.match.state,t:+__inkwave.match.time.toFixed(1),boot:__inkwave.bootMs,turf:__inkwave.match.actors.map((a)=>Math.round(a.stats.turf))})", "log": "smoke" }
+]
