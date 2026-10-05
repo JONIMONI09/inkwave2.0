@@ -5,6 +5,150 @@ progresses; keep the completed list factual and the remaining list actionable.
 
 Last updated: 2026-10-05
 
+### UI bug fixes: Esc loop in pushed sub-screens and a stuck judge hand-off (2026-10-05, branch `fix/hud-timing-spawn-protection`)
+Both bugs were user-reported with screenshots. Base still `a3309cf`; two files changed plus one new test suite.
+
+**Esc loop (confirmed, E-005 — a regression from the profiles/touch-editor work).** Settings → Touch → Touch
+layout editor, then Esc: the editor's `onBack` (and the profiles screen's) called `_go('settings', {back:true})`.
+`_go` always *pushes*, so the stack became `[main, settings, touchedit, settings]`; the next Esc popped
+`stack[len-2]` = `touchedit` — back into the editor. Esc therefore cycled editor ↔ Settings forever, exactly as
+reported. Fix: new `Menus._popTo(name)` helper — if `stack[len-2] === name` it uses `show(name, {pop:true,back:true})`
+(and so removes the editor from the stack), otherwise it falls back to the push, which is correct for screens the
+engine opens directly (no Settings underneath). Used by the touchedit `onBack` + DONE button and the profiles
+`onBack`. Forward navigation via `_go` is untouched — only the way *back* changed.
+
+**Results stuck (confirmed, E-006 — a latent bug, not new).** `_judge()` awaited the HUD judge animation with
+`await (judgeP || new Promise(r => setTimeout(r, 4000)))`. A Promise is **always truthy**, so that fallback was
+dead code: if the judge's rAF loop ever stalls (HUD paused, tab throttling, a fx callback throwing — the judge
+card is driven by the HUD's own `_fxLoop` on `_fxTime`, `src/ui/hud.js` `_fxLoop`), nothing advances the match
+and the player stares at the judge card forever. Fix: `Promise.race([judgeP.catch(()=>{}), setTimeout 9000])` —
+`JUDGE_MAX_MS` = 9000 s ceiling sits above the animation's own drumroll/reveal end (~3.45 s + reveal) so a healthy
+judge still wins the race and controls its own pacing; a stalled one no longer strands the round.
+
+**Regression tests (new `test/menu-back.test.mjs`, 7 tests).** The stack push/pop semantics of `show()`/`_back()`
+are reproduced verbatim, so the loop is *demonstrated* (old behaviour cycles; pop escapes); the source is asserted
+to contain `_popTo` and no remaining `_go('settings', {back:true})`; the judge race and the removal of the truthy
+`judgeP ||` fallback are asserted on `src/main.js` source, including a runtime proof that a never-resolving promise
+raced against a timeout does not block. Wired into `npm test` (suite 10).
+
+**Checks run (exact results).** `npm run check` → `syntax ok`; `npm test` → **92 passed, 0 failed** across 10
+suites (previous 85 + menu-back 7). `npm run check-maps` and `npm run music` not re-run — no map, audio or
+package-config-for-those-scripts changes.
+
+**Not verified on a device.** The screenshots show both screens render correctly (VICTORY results with coverage
+bar; judge card with LEMON WINS), so this is a logic fix on top of working rendering — but the actual Esc dance
+and the judge hand-off still need one real playthrough, which headless boot cannot complete inside the command
+cap. Remaining risk: the Firefox console warnings in the screenshot are benign (TitanOne glyph bbox,
+`WEBGL_debug_renderer_info` deprecation, `longtask` unsupported — all already caught); the
+`getInternalformatParameter: 'pname' must be SAMPLES` warning comes from `gpu-caps.js` probing
+TEXTURE_FILTERABLE/RENDERABLE pnames, works but is noisy — switching to try/catch-only probing is available on
+request if console silence matters.
+
+---
+
+### Repository setup, HUD timing and spawn protection (2026-10-05, branch `fix/hud-timing-spawn-protection`)
+Base: `c2cd438` (clean tree at start; nothing pre-existing was discarded). Four commits: `b68f2ee`,
+`2f602d0`, `32cfa71`, `6194fc7`.
+
+**Project instructions and skills (complete).**
+- `CLAUDE.md` (new): verified commands, verify-before-change, English/German-only, no `vendor/` edits,
+  respect for `docs/CONTRACTS.md`, session/error obligations, honest reporting. 118 lines.
+- `AGENTS.md` (new): a five-line pointer to `CLAUDE.md` — deliberately no duplicated content.
+- `.claude/skills/` (new, 6 skills, 32 KB total): `session-logging`, `error-triage`, `inkwave-verify`,
+  `gameplay-change-pr`, `touch-ui-change`, `performance-change`. Each has YAML frontmatter whose `name`
+  matches its folder (checked by script) and a description stating what it does and when to use it.
+- **Unverified:** Freebuff's actual skill discovery could not be exercised from this shell, so whether the
+  skills appear in slash autocomplete is **not confirmed**. The format follows `.claude/skills/<name>/SKILL.md`
+  with `name` + `description`; no platform-specific frontmatter (`disable-model-invocation`) was used, since
+  nothing in this environment confirms Freebuff supports it.
+
+**HUD timing (complete).** Three confirmed defects, all fixed in `src/main.js`:
+- *Confirmed:* `_intro()` revealed the HUD on a 3.0 s timer and the boss intro on 5.6 s, while the match only
+  reaches `playing` at `MATCH` 4.2 s / `BOSS_MODE.intro` 7.2 s (`src/boss/bossMode.js:9`) — the ink tank,
+  minimap and reticle were on screen 1.2–1.6 s **before GO** on every stage. Both timers are gone; the HUD now
+  comes up on the `match:state` `playing` edge, which is also where the GO banner fires (HUD first, so GO is
+  never hidden).
+- *Confirmed:* `_judge()` called `hud.setVisible(true)`, re-showing the gameplay HUD over the overview camera.
+  The judge card draws in `overLayer`, which `setVisible(false)` does not touch (`src/ui/hud.js:317`), so this
+  now hides. Touch controls also lost their `intro` and `finish` states.
+- *Confirmed:* the practice-loadout tuck in `_onScreen` could resurrect a HUD the intro/judge had hidden; a
+  single `_gameplayHudWanted()` helper now backs both decisions.
+- **Not verified in a browser.** The flow is timers plus an event-bus edge; headless boot does not complete
+  inside the command cap.
+
+**Spawn protection (complete).** Previously a flat `PLAYER.spawnInvuln` (1.6 s) armed at respawn, with no area.
+- New `SPAWN_PROTECT` block in `src/config.js` (radius, height, `leaveGrace: 3.0`, hp/ink regen, intercept flags).
+- `Actor.protected` is the single source of truth (`invuln > 0 || inSpawnZone || spawnGrace > 0`) and gates
+  `damage()`, enemy-ink damage and the rig's spawn shimmer. The grace timer is *pinned to full while inside*,
+  so re-entering re-arms it rather than stacking a second timer — this is what keeps protection coherent with
+  `PLAYER.spawnInvuln` instead of additive.
+- Hostile ink is consumed at the dome wall in `Projectiles._step`; bombs are disarmed in `_updateBombs` through
+  the existing removal path (mesh back, no detonation). Friendly ordnance untouched; the dome has a lid so an
+  arcing shot is not blocked by a wall it never touches.
+- New `src/game/spawn-protect.js` holds the geometry query, because `weapons.js` needs it and `actor.js`
+  already imports `weapons.js` — putting it in `actor.js` would have closed an import cycle.
+- Bots, remotes and the local player all run the same `Actor.update` path; online, the host remains the only
+  authority for damage (`damage()` is not driven on guests), so the rule stays host-deterministic.
+- **Not verified in a match** — dome visuals, the intercept feel and the audio rate-limit need a real session.
+
+**Spawn-point measurement (evidence gathered, nothing changed).** New `tools/measure-spawns.mjs`
+(`npm run measure:spawns`), static geometry per stage: pad→pad 80.4–87.2 m (mean 83.9), spawn→midline
+35.7–42.0 m (mean 39.4). Two outliers sit closer in: `kelpline` and `cargo` both at 35.7 m / 32 % of stage
+depth, against 42–46 % for the other five. **Deaths shortly after spawning and time to first contact were
+NOT measured** — they are match outcomes, not layout facts, and need a live match this environment cannot
+complete. Per the brief, no spawn location was moved. Waiting on the user to pick an option.
+
+**Cheer Orb rework (complete, after the user's clarification).** The user answered the two open questions: keep
+the ball mechanic, add a lift-off where you rise slowly, hover (no free flight), can still turn and throw; and
+the shield should be tough but breakable, with "Yeah!" making it stronger and stronger. Implemented in
+`src/game/specials.js` + a new `CHEER_ORB` block in `src/config.js`:
+- `speed: 0` and **no read of `a.intent.move` at all**, with horizontal velocity damped on the rise and while
+  hovering — you literally cannot fly around; `aimFace` stays on so turning/aiming keeps working.
+- The rise ends at `CHEER_ORB.hoverHeight` above `G.level.groundHeight(...)`, so it works on any stage.
+- Shield: a pool (`shieldMax` 120) drained through the **existing `filterDamage` hook** — no new damage path.
+  Empty → `shield_pop` + pooled burst + `end(a, 'shield')`, which is the intended way back to normal.
+- Cheers: `_booyahCheer()` feeds BOTH charge and shield, reused from the existing teammate scan in `cheer(a)`,
+  capped at 260 so C-spam cannot make an unkillable orb. Slow regen (6/s) only up to the base pool.
+- Landing grants `invuln = max(invuln, 2.0)` — the **same** invulnerability the spawn dome uses, so the two
+  compose instead of stacking into something longer than either was meant to be.
+- Online: the shield pool rides in bits 6–15 of the ghost int that was already being sent, so no new packet and
+  the host stays authoritative. Remote actors never run `body()`, so the hover physics cannot desync a client.
+- The ball itself is untouched: charge 4.5 s, auto-throw, blast radius 8.4 all unchanged.
+
+**Local profiles (complete).** The user deferred the encrypted export and asked for a local profile in browser
+data only. New `src/core/profiles.js` + a *Settings → Optimize → Local profile* screen:
+- create / switch / rename / delete, everything in `localStorage`, nothing uploaded.
+- **Update safety, which was the actual requirement:** the record is versioned; `migrateProfile()` brings an older
+  one up field by field and clamps the numbers (a NaN level would otherwise poison the progression screen); the
+  pre-profiles `inkwave.profile` key is adopted on first run so nobody loses progress on upgrade; it is kept in
+  step on every write so an older build still finds a profile; a record from a **newer** build is left untouched
+  with a warning rather than half-applied; the last profile cannot be deleted.
+- `DEFAULT_PROFILE` moved from `main.js` into `config.js` so the live profile and the store cannot drift apart.
+
+**Optimize → Pre-warm on the menu (complete, with a correction to the brief's premise).** The brief said shader
+pre-loading "should already be implemented" — **it is not.** There is no Service Worker, no Cache API and no
+asset cache anywhere in the project; everything is procedural. What *does* exist is the warm-up machinery
+(`Character.warmAll`, `showcase._warmup`, `_warmCharacters`), and it currently runs at match start. So the setting
+moves that same work earlier into menu idle time instead of inventing a cache. `_idlePrewarm()` is best-effort,
+off-scene, gated on `settings.prewarm` and on `G.mode === 'menu'`.
+
+**Checks run (exact results).**
+- `npm run check` → `syntax ok`
+- `npm test` → **85 passed, 0 failed** across 9 suites (scoring 13, results 7, swimsub 7, touch 5, compat 9,
+  hud-timing 7, spawn-protect 14, cheer-orb 12, profiles 11)
+- `npm run measure:spawns` → table above
+- `npm run check-maps` → ok · `npm run music` → ok
+
+**Remaining / blocked.**
+- **Spawn-point change — awaiting the user's choice.** Evidence is in; nothing was moved.
+- **Encrypted profile export — deferred by the user** ("egal, dann lasse es erstmal"). Not started.
+- **Device/browser verification** — still outstanding for the HUD timing, the spawn dome, the Cheer Orb hover and
+  the Firefox path. None of it has been seen in a browser.
+
+---
+
+## Completed work
+
 ---
 
 ## Completed work

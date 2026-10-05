@@ -92,6 +92,23 @@ export const PLAYER = {
   fireBuffer: 0.16,
 };
 
+// ---- Spawn protection (the dome over your own spawn pad) ----
+// Protection is POSITION-based, not a stacked timer: while you stand inside the dome you are protected, and the
+// moment you step out a single grace timer starts counting down. That keeps PLAYER.spawnInvuln (the respawn
+// invulnerability) coherent instead of additive — two independent timers re-arming each other is how a player ends
+// up permanently unkillable, so there is exactly one source of truth here and `Actor.protected` reads it.
+export const SPAWN_PROTECT = {
+  radius: 6.5,        // horizontal radius of the dome around your team's spawn pad, metres
+  height: 4.2,        // vertical reach: you are protected on the deck, not if you jump onto the roof above it
+  leaveGrace: 3.0,    // seconds of protection after leaving the dome (the brief's 3 s)
+  hpRegen: 55,        // hp/s inside the dome — a fresh spawn heals in about 2 s, so dying to a trade is impossible
+  inkRegen: 30,       // ink/s inside, faster than the normal kid-form refill (PLAYER.inkRefillKid)
+  intercept: true,    // hostile ink stops at the field instead of travelling through it
+  interceptSlow: 0.4, // ... and slows to this fraction of its speed for the frame it crosses
+  bounceVolume: 0.5,  // one 'shield_hit' every this many seconds of continuous contact, so a wall of ink doesn't machine-gun
+  domeAlpha: 0.28,    // the shield dome's opacity while you are inside it
+};
+
 // ---- Weapons ----
 // stats.* are 0..1 display bars for the loadout screen.
 export const WEAPONS = {
@@ -411,6 +428,27 @@ export const SUB_ORDER = ['bomb', 'sticky', 'burst', 'shaker', 'seeker', 'waddle
 export const SUB = SUBS; // older code reads SUB.bomb
 
 // Specials. Every special refills your ink tank when it starts. `duration` = how long a timed special lasts (s).
+// ---- Cheer Orb (booyah) ----
+// The orb used to be a stationary charge-and-throw. It now also lifts you: a slow rise, then a hover you cannot fly
+// around in (horizontal input is ignored), but you can still turn and aim and keep throwing the ball. While you are up
+// you carry a shield that soaks damage; it wears down on its own, but a "Yeah!" from you or a teammate feeds it and it
+// grows stronger instead of shrinking.
+export const CHEER_ORB = {
+  riseSpeed: 4.2,        // m/s of the initial climb — slow enough to read as "lifting off", not a rocket
+  hoverHeight: 3.4,      // metres above the ground below once the rise ends
+  hoverBob: 0.1,         // idle bob amplitude while hovering, so it never looks frozen
+  landRecover: 2.0,      // seconds of spawn-style protection after you touch down again (the brief's 2 s)
+  shieldMax: 120,        // shield hp in damage units; it takes real fire to chew through this
+  shieldBreakAt: 0,      // the orb ends when the shield reaches this
+  cheerShield: 45,       // shield hp restored by one "Yeah!" from you or a teammate — the "stronger and stronger" bit
+  cheerShieldCap: 260,   // …up to here, so a squad spamming C cannot make an unkillable orb
+  cheerCooldown: 0.35,   // seconds between cheers the shield accepts
+  shieldRegen: 6,        // hp/s the shield regens on its own, so a clean hover recovers a little
+  shieldHitFlash: 0.2,   // seconds of "something just bounced off" feedback per hit
+};
+
+// ---- Specials ----
+// `booyah` also lifts you into a hover you cannot fly around in; the numbers live in CHEER_ORB above.
 export const SPECIALS = {
   slam: { id: 'slam', name: 'Tidal Slam', blurb: 'Leap up and slam down in a huge ink shockwave.', rise: 0.55, hang: 0.25, radius: 5.2, killRadius: 3.2, damageMax: 180, damageMin: 55 },
   storm: { id: 'storm', name: 'Ink Tempest', blurb: 'Hurl a rain cloud that soaks the turf below.', duration: 6.5, radius: 3.4, dps: 34, throwSpeed: 16, driftSpeed: 1.1 },
@@ -456,7 +494,7 @@ export const SPECIALS = {
     // swing in the air: one flip — hits behind you as the stamp goes over, then a longer-reaching smash in front
     flipTime: 0.5, flipReach: 2.7, flipRadius: 1.9, flipBackReach: 1.2, flipBackRadius: 1.6 },
   // a ball of ink held overhead charges over time (faster with "Yeah!" cheers); throw it once full for a huge blast
-  booyah: { id: 'booyah', name: 'Cheer Orb', blurb: 'Hold up a ball of ink that charges over time, then throw it for a huge blast. Teammates\' "Yeah!" cheers (C) charge it faster and top up their own special.',
+  booyah: { id: 'booyah', name: 'Cheer Orb', blurb: 'Lift off and hover with a ball of ink charged overhead — you can turn and throw, but not fly around. Your shield soaks damage while you are up, and "Yeah!" cheers (C) from you or your team make it stronger.',
     charge: 4.5, cheer: 0.12, cheerSpecial: 12, autoThrow: 2.5, moveSpeed: 1.8, throwSpeed: 19.6, fuse: 1.5, radius: 8.4, killRadius: 4.6, damageMax: 220, damageMin: 60 },
   // grapple: the sub button fires a tether to latch onto surfaces and zip over; super jump back when it ends
   zipcaster: { id: 'zipcaster', name: 'Zipline', blurb: 'Cloaked in a mysterious aura, your sub becomes a grapple: latch onto walls from afar and zip over, main weapon in hand. You super jump back when it ends (marked for everyone to see).',
@@ -562,6 +600,10 @@ export const PROGRESSION = {
 };
 
 // ---- Settings defaults (persisted in localStorage 'inkwave.settings') ----
+// The shape of one local profile. Shared by main.js (the live profile) and core/profiles.js (the account store),
+// so the two can never drift apart — a profile migrated by the store is always the shape the game expects.
+export const DEFAULT_PROFILE = { name: 'Player', level: 1, xp: 0, wins: 0, matches: 0, totalTurf: 0, weapon: 'shooter' };
+
 export const DEFAULT_SETTINGS = {
   sensitivity: 1.0,         // mouse multiplier 0.2..3
   padSensitivity: 1.0,
@@ -582,6 +624,9 @@ export const DEFAULT_SETTINGS = {
   rumble: 1.0,              // gamepad vibration 0..1 (only while the pad is the last-used device)
   aimAssist: 1.0,           // gamepad aim assist 0..1
   aimAssistMouse: false,    // optional aim assist for mouse
+  // Optimization
+  prewarm: true,            // compile the player's shaders + warm the showcase while the main menu idles, so the
+                            // first match does not hitch on a compile. Costs a little CPU and battery on a phone.
 };
 
 // Quality presets consumed by the renderer + fx.

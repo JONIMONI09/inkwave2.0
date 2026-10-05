@@ -12,7 +12,7 @@
 // this.world and update in update(dt).
 import * as THREE from 'three';
 import { G, emit, on, clamp, lerp, angleDiff } from '../core/ctx.js';
-import { SPECIALS, SPECIAL_ORDER, SUBS, PLAYER } from '../config.js';
+import { SPECIALS, SPECIAL_ORDER, SUBS, PLAYER, CHEER_ORB } from '../config.js';
 import { Physics, Hit } from './physics.js';
 import { getWeaponDef } from './character-weapons.js';
 import { getPlasticMaterial, getInkMaterial } from './character-mats.js';
@@ -411,6 +411,7 @@ export class SpecialSystem {
   // ---------------------------------------------------------------------------------------------- damage + hits
   filterDamage(v, amount, attacker, source) {
     const s = v.specialActive;
+    if (s && s.id === 'booyah' && s.shieldHp > CHEER_ORB.shieldBreakAt) { this._booyahShieldHit(v, s, amount); return 0; }
     if (s && s.id === 'kraken') { this._knock(v, attacker, Math.min(4, amount * s.def.knockPerDamage)); this._hitFlash(v); return 0; }
     if (s && s.id === 'crab') return IMPL.crab.hurt.call(this, v, s, amount, attacker);
     // Mega Stamp mid-swing: anything coming from the front is deflected (sides + back stay open)
@@ -483,6 +484,33 @@ export class SpecialSystem {
   }
 
   // ---------------------------------------------------------------------------------------------- shields
+  // ---- Cheer Orb shield -------------------------------------------------------------------------------
+  // The hover's damage sink. Unlike Bubbler's giveShield() this is not a timed invulnerability: it is a pool of hp
+  // that wears down, and a "Yeah!" from you or a teammate refills it (up to a cap, so a squad spamming C cannot
+  // make an unkillable orb). It ends the orb when it empties, which is the intended way back to normal.
+  _booyahShieldHit(a, s, amount) {
+    const C = CHEER_ORB;
+    s.shieldHp = Math.max(C.shieldBreakAt, s.shieldHp - amount);
+    s.hitFlash = C.shieldHitFlash;
+    s.shieldSnd = (s.shieldSnd || 0) - 1;
+    if (near(a.pos, 30) && s.shieldSnd <= 0) { s.shieldSnd = 6; play('shield_hit', { pos: a.isLocal ? undefined : a.pos, volume: 0.5 }); }
+    if (s.bubble) s.bubble.material.uniforms.uPulse && (s.bubble.material.uniforms.uPulse.value = 1);
+    if (s.shieldHp <= C.shieldBreakAt) {
+      if (near(a.pos)) { play('shield_pop', { pos: a.isLocal ? undefined : a.pos, volume: 0.7 }); G.fx?.burst(_v.copy(a.pos).setY(a.pos.y + 0.9), UP, a.color, { count: 14, speed: 3.4, size: 0.08 }); }
+      this.end(a, 'shield');   // the orb drops out of your hands and you fall
+    }
+  }
+
+  // A cheer feeds BOTH the charge and the shield, so cheering is worth doing even once the ball is full.
+  _booyahCheer(s) {
+    const C = CHEER_ORB, d = s.def;
+    s.charge = Math.min(1, (s.charge || 0) + d.cheer);
+    s.cheered = 0.35;
+    s.shieldHp = Math.min(C.cheerShieldCap, (s.shieldHp || 0) + C.cheerShield);
+    s.shieldPulse = 0.5;
+    if (s.bubble) s.bubble.scale.setScalar(1.5);   // the bubble swells, then settles back over the tick
+  }
+
   giveShield(a, time, owner) {
     a.status.shield = Math.max(a.status.shield, time);
     a._shieldOwner = !!owner;
@@ -519,6 +547,7 @@ export class SpecialSystem {
       if (o.team !== a.team || !o.alive || !s || s.id !== 'booyah' || s.thrown) continue;
       s.charge = Math.min(1, (s.charge || 0) + d.cheer);
       s.cheered = 0.35;
+      this._booyahCheer(s);
       helped = true;
     }
     // cheering on a teammate's orb tops up your own special a little
@@ -1717,12 +1746,60 @@ const IMPL = {
   booyah: {
     start(a, s) {
       // `bomb` gives the throw-arc preview the orb's launch speed (the orb flies with the same gravity as bombs)
-      Object.assign(s, { charge: 0, fullT: 0, speed: s.def.moveSpeed, noSquid: true, aimFace: true, thrown: false, cheered: 0, bomb: { kind: 'booyah', throwSpeed: s.def.throwSpeed } });
+      const C = CHEER_ORB;
+      Object.assign(s, {
+        charge: 0, fullT: 0, speed: 0, noSquid: true, aimFace: true, thrown: false, cheered: 0,
+        bomb: { kind: 'booyah', throwSpeed: s.def.throwSpeed },
+        // the hover: a slow rise, then you hold station. speed 0 = no horizontal steering, so the orb cannot be used
+        // to fly around — you can still turn (aimFace) and throw.
+        rise: 0, landed: false,
+        shieldHp: C.shieldMax, shieldPulse: 0, hitFlash: 0, shieldSnd: 0,
+      });
       a.character.subPropHidden = true;
+      a.grounded = false;
+      s.rise = C.riseSpeed;
       s.ball = new THREE.Mesh(this.sphereGeo, new THREE.MeshBasicMaterial({ color: a.color.clone().multiplyScalar(2) }));
       s.halo = new THREE.Mesh(this.sphereGeo, bubbleMat(a.color));
-      this._add(s.ball, s.halo);
+      // the damage-absorbing bubble around the hovering kid; the same material Bubbler uses, so it reads as one shield
+      s.bubble = new THREE.Mesh(this.sphereGeo, bubbleMat(a.color));
+      s.bubble.renderOrder = 4;
+      s.bubble.scale.setScalar(1.4);
+      this._add(s.ball, s.halo, s.bubble);
+      if (hearable(a)) play('shield_up', { pos: a.isLocal ? undefined : a.pos, volume: a.isLocal ? 0.7 : 0.5 });
       s.loop = hearable(a) ? loop('booyah_charge', { pos: a.isLocal ? undefined : a.pos, volume: a.isLocal ? 0.55 : 0.4 }) : null;
+    },
+    // the hover, run before the ball's charge so the player is already up while the ball fills
+    body(a, s, dt) {
+      const C = CHEER_ORB;
+      if (s.rise > 0) {
+        // rising: climb at a fixed rate and bleed off the momentum once the target height is reached
+        a.vel.y = s.rise;
+        a.vel.x *= 0.86; a.vel.z *= 0.86;      // no horizontal steering on the way up either
+        const gy = G.level.groundHeight(a.pos.x, a.pos.z, a.pos.y + 0.5);
+        const floor = gy === -Infinity ? a.pos.y : gy;
+        if (a.pos.y >= floor + C.hoverHeight) { s.rise = 0; a.vel.y = 0; }
+        return;
+      }
+      // hovering: hold a height above whatever is below, and stand still horizontally
+      const gy = G.level.groundHeight(a.pos.x, a.pos.z, a.pos.y + 0.5);
+      const floor = gy === -Infinity ? s.landFloor ?? a.pos.y : gy;
+      s.landFloor = floor;
+      const wantY = floor + C.hoverHeight + Math.sin(s.t * 2.2) * C.hoverBob;
+      if (a.pos.y <= wantY + 0.06) {          // touched down (or the ground rose under us): the orb is over
+        if (!s.landed) {
+          s.landed = true;
+          // 2 s of protection after landing, granted through the SAME invulnerability the spawn dome uses, so it
+          // cannot stack with the dome into something longer than either was meant to be
+          a.invuln = Math.max(a.invuln, C.landRecover);
+          if (hearable(a)) play('step_dry', { pos: a.pos, volume: 0.5 });
+        }
+        a.vel.set(0, Math.min(0, a.vel.y), 0);
+        a.grounded = true;
+        return;
+      }
+      s.landed = false;
+      a.vel.x *= 0.82; a.vel.z *= 0.82;        // damped to nothing: hovering, not flying
+      a.vel.y = (wantY - a.pos.y) * 2.2;
     },
     weapon(a, s, dt, inp) {
       const d = s.def;
@@ -1739,6 +1816,7 @@ const IMPL = {
     },
     tick(a, s, dt) {
       if (!s.ball) return;
+      const C = CHEER_ORB;
       if (a.character.getHeadPosition) a.character.getHeadPosition(_v); else _v.copy(a.pos).setY(a.pos.y + 1.5);
       const r = 0.16 + 0.2 * s.charge;
       s.ball.position.set(_v.x, _v.y + 0.42 + r, _v.z);
@@ -1748,6 +1826,18 @@ const IMPL = {
       s.ball.scale.setScalar(r * pulse);
       s.halo.scale.setScalar(r * 1.3 * pulse);
       s.halo.material.uniforms.uTime.value = s.t;
+      // the shield bubble swells with a cheer and flickers on a hit; its size reads the remaining pool
+      s.shieldPulse = Math.max(0, (s.shieldPulse || 0) - dt * 2);
+      s.hitFlash = Math.max(0, (s.hitFlash || 0) - dt);
+      if (s.shieldSnd > 0) s.shieldSnd -= dt;
+      if (s.bubble) {
+        const wear = 0.75 + 0.65 * (s.shieldHp / C.shieldMax);          // a worn-down orb shows a smaller bubble
+        s.bubble.position.copy(a.pos).setY(a.pos.y + 0.95);
+        s.bubble.scale.setScalar(wear * 1.4 + s.shieldPulse * 0.5 + (s.hitFlash > 0 ? 0.12 : 0));
+        if (s.bubble.material.uniforms.uTime) s.bubble.material.uniforms.uTime.value = s.t;
+      }
+      // a slow regen so a clean hover claws back a little, without ever refilling on its own
+      if (s.shieldHp > 0 && s.shieldHp < C.shieldMax) s.shieldHp = Math.min(C.shieldMax, s.shieldHp + C.shieldRegen * dt);
       s.loop?.set?.({ pitch: 1 + s.charge, pos: a.isLocal ? undefined : a.pos });
     },
     throwIt(a, s) {
@@ -1762,9 +1852,11 @@ const IMPL = {
     },
     end(a, s) {
       s.loop?.stop?.(0.2);
-      this._remove(s.ball, s.halo);
-      s.ball?.material.dispose(); s.halo?.material.dispose();
+      this._remove(s.ball, s.halo, s.bubble);
+      s.ball?.material.dispose(); s.halo?.material.dispose(); s.bubble?.material.dispose();
+      s.ball = s.halo = s.bubble = null;
       a.character.subPropHidden = false;
+      a.vel.x *= 0.3; a.vel.z *= 0.3;
     },
   },
 
@@ -2125,14 +2217,24 @@ export function specialNetState(a) {
   const s = a.specialActive;
   if (!s || s.ghost || !s.def) return 0;
   if (s.kind === 'crab') return (s.roll ? 1 : 0) | (s.firing > 0 ? 2 : 0) | ((Math.round((((s.hull % TAU) + TAU) % TAU) / TAU * 255) & 255) << 2);
-  if (s.kind === 'booyah') return Math.round(clamp(s.charge || 0, 0, 1) * 63);
+  if (s.kind === 'booyah') {
+    // bits 0–5 charge, 6–15 the shield pool (0–255 over CHEER_ORB.cheerShieldCap, so a cheered orb reads on
+    // every client) — still one int, so the ghost's payload is unchanged in size
+    const ch = Math.round(clamp(s.charge || 0, 0, 1) * 63);
+    const sh = Math.round(clamp((s.shieldHp || 0) / CHEER_ORB.cheerShieldCap, 0, 1) * 255);
+    return ch | (sh << 6);
+  }
   return 0;
 }
 export function specialNetApply(a, v) {
   const s = a.specialActive;
   if (!s || !s.ghost) return;
   if (s.kind === 'crab') s.net = { roll: !!(v & 1), firing: !!(v & 2), hull: ((v >> 2) & 255) / 255 * TAU };
-  else if (s.kind === 'booyah') { s.netCharge = true; s.charge = (v & 63) / 63; }
+  else if (s.kind === 'booyah') {
+    s.netCharge = true;
+    s.charge = (v & 63) / 63;
+    s.shieldHp = ((v >> 6) & 255) / 255 * CHEER_ORB.cheerShieldCap;
+  }
 }
 
 KIT_GHOSTS.sp = { ghost: (a, d) => G.specials?.netGhost(a, d), netHurt: (gid, dmg) => G.specials?.netHurtObj(gid, dmg) };

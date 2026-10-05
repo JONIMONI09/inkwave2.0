@@ -29,7 +29,7 @@ import { WhatsNew } from './news.js';
 // read/write it so the store stays the single source of truth for the versioned key and its clamps.
 import { TOUCH_CONTROLS, DEFAULT_LAYOUT, MIN_SIZE, MAX_SIZE, MIN_OPACITY, loadLayout, saveLayout, clearLayout, activeOrientation } from '../core/touch-layout.js';
 
-const SCREENS = ['loading', 'title', 'main', 'mode', 'loadout', 'setup', 'locker', 'settings', 'touchedit', 'howto', 'credits', 'pause', 'results', 'online', 'lobby'];
+const SCREENS = ['loading', 'title', 'main', 'mode', 'loadout', 'setup', 'locker', 'settings', 'touchedit', 'profiles', 'howto', 'credits', 'pause', 'results', 'online', 'lobby'];
 // Transitions that get the full-screen ink wipe (the rest use staggered pop-ins).
 const WIPES = new Set(['loading>title', 'title>main', 'results>main', 'pause>main', 'results>null', 'pause>title', 'online>lobby', 'lobby>online', 'lobby>main', 'results>lobby', 'pause>online']);
 // Pushes/pops between these get the light ink swipe (decorative — the swap itself is immediate).
@@ -193,6 +193,10 @@ const SETTINGS_TABS = [
     // desktop app only (the Electron preload provides window.inkwaveNative)
     ...(typeof window !== 'undefined' && window.inkwaveNative ? [{ key: 'fullscreen', label: 'Fullscreen', type: 'toggle', help: 'Fill the whole display. Also ⌃⌘F or F11.' }] : []),
   ] },
+  { id: 'optimize', label: 'Optimize', icon: 'bolt', rows: [
+    { key: 'prewarm', label: 'Pre-warm on the menu', type: 'toggle', help: 'While you sit in the menus, compile the shaders and warm the pools your kit needs, so the first match of a session starts without a compile hitch. Costs a little battery.' },
+    { key: '_profile', label: 'Local profile', type: 'link', help: 'Create, switch, rename or delete a local profile. Everything stays in this browser.' },
+  ] },
   { id: 'audio', label: 'Audio', icon: 'speaker', rows: [
     { key: 'master', label: 'Master volume', type: 'slider', min: 0, max: 1, step: 0.05, fmt: pctFmt, help: 'Overall loudness of everything.' },
     { key: 'music', label: 'Music', type: 'slider', min: 0, max: 1, step: 0.05, fmt: pctFmt, help: 'Menu and battle soundtrack.' },
@@ -212,6 +216,7 @@ const TAB_BLURB = {
   touch: 'On-screen controls: rearrange the buttons, resize and dim them for your thumbs.',
   video: 'Quality tier, field of view and screen effects.',
   audio: 'Master, music and sound-effect levels.',
+  optimize: 'Warm the game up while you are in the menus, and manage your local profile.',
   gameplay: 'Shake, vibration, colour-safe inks, minimap and match defaults.',
 };
 
@@ -586,6 +591,15 @@ export class Menus {
 
   _go(name, opts = {}) { this.show(name, { ...opts, push: true }); }
 
+  // Leave a screen that was REACHED BY A PUSH and go back to the one underneath it.
+  // _go() pushes, which is right when you move forward into a new screen and wrong when you come back out: pushing
+  // 'settings' from 'touchedit' leaves the stack as [main, settings, touchedit, settings], and the next Back then pops
+  // straight back into the editor — the loop you land in if you press Esc twice. Pop instead.
+  _popTo(name) {
+    if (this._stack.length > 1 && this._stack[this._stack.length - 2] === name) { this._sfx('ui_back'); this.show(name, { pop: true, back: true }); return; }
+    this._go(name, { back: true });   // not where we came from (opened directly by the engine): fall back to pushing
+  }
+
   _back() {
     if (this._modal) { if (this._modal._onBack) this._modal._onBack(); else this._closeModal(); return; }
     if (performance.now() - this._shownAt < 200) return; // swallow the key that opened this screen
@@ -863,6 +877,53 @@ export class Menus {
   }
   _panel(cls, ...kids) { return h('div', { class: `iw-panel ${cls || ''}` }, ...kids); }
 
+  // ================================================================================== SCREEN: local profiles
+  // Settings → Optimize → Local profile. Everything lives in this browser's localStorage — there is no account
+  // server and nothing is uploaded. Switching profiles swaps the live profile object in place, so level, XP, loadout
+  // and look all follow.
+  _scr_profiles() {
+    const list = () => safeCall(() => this.api.getProfiles && this.api.getProfiles()) || [];
+    const nameIn = h('input', { class: 'iw-tf__name', type: 'text', maxlength: '16', placeholder: 'Profile name' });
+    const rowsEl = h('div', { class: 'iw-tf__list' });
+    const draw = () => {
+      rowsEl.innerHTML = '';
+      const items = list();
+      for (const p of items) {
+        const row = h('div', { class: 'iw-tf__row' + (p.active ? ' is-active' : '') },
+          h('div', { class: 'iw-tf__who' }, h('i', { html: p.active ? GLYPHS.check : GLYPHS.squidlet }), h('b', null, p.name),
+            h('small', null, p.active ? 'PLAYING NOW' : `created ${new Date(p.created).toLocaleDateString()}`)),
+          h('div', { class: 'iw-tf__ops' },
+            p.active ? null : this._btn({ id: 'use-' + p.id, label: 'USE', icon: GLYPHS.play, cls: 'iw-btn--ghost iw-btn--small', sound: 'ui_confirm', accept: () => { this.api.switchProfile?.(p.id); this._sfx('ui_confirm'); draw(); } }),
+            this._btn({ id: 'ren-' + p.id, label: 'RENAME', icon: GLYPHS.pencil, cls: 'iw-btn--ghost iw-btn--small', sound: 'ui_toggle', accept: () => { const n = prompt('New name for this profile', p.name); if (n != null) { this.api.renameProfile?.(p.id, n.trim() || p.name); draw(); } } }),
+            this._btn({ id: 'del-' + p.id, label: 'DELETE', icon: GLYPHS.close, cls: 'iw-btn--ghost iw-btn--small', sound: 'ui_error', accept: () => {
+              if (items.length <= 1) { this.toast('The last profile cannot be deleted', { kind: 'error', icon: GLYPHS.close }); return; }
+              const r = safeCall(() => this.api.deleteProfile?.(p.id)) || {};
+              if (r.refused) this.toast('The last profile cannot be deleted', { kind: 'error', icon: GLYPHS.close });
+              else this.toast(`Deleted “${p.name}”`, { icon: GLYPHS.reset });
+              draw();
+            } })));
+        rowsEl.appendChild(row);
+      }
+    };
+    const panel = this._panel('iw-tf iw-in',
+      h('div', { class: 'iw-tle__head' }, h('i', { html: GLYPHS.users }), h('b', null, 'LOCAL PROFILES'), h('small', null, 'Stored in this browser only')),
+      h('p', { class: 'iw-tf__note' }, 'Level, XP, loadout and look are kept per profile. Nothing is uploaded, and switching does not lose your progress on any of them.'),
+      h('div', { class: 'iw-tf__new' }, nameIn,
+        this._btn({ id: 'tfcreate', label: 'CREATE', icon: GLYPHS.plus, cls: 'iw-btn--primary iw-btn--small', sound: 'ui_confirm', accept: () => {
+          const n = nameIn.value.trim();
+          if (!n) { this.toast('Give it a name first', { kind: 'error', icon: GLYPHS.close }); return; }
+          this.api.createProfile?.(n); nameIn.value = ''; this._sfx('ui_confirm'); draw();
+        } })),
+      rowsEl);
+    draw();
+    const el = h('div', { class: 'iw-screen iw-touchedit' },
+      h('div', { class: 'iw-scrim-left' }),
+      this._header('LOCAL PROFILES', { sub: 'Everything stays in this browser' }),
+      panel,
+      this._prompts([[['↑', '↓'], 'DPad', 'Choose'], ['Esc', 'B', 'Back']]));
+    return { el, wrap: true, initial: () => panel.querySelector('[data-nav]'), onBack: () => this._popTo('settings') };
+  }
+
   // ================================================================================== SCREEN: touch layout editor
   // Settings → Touch → Touch layout. The device card on the right mirrors the orientation it edits and carries the
   // real `.tw-btn` look, so the arrangement on screen is the arrangement you play with. Drag a button to place it,
@@ -988,13 +1049,13 @@ export class Menus {
         this._btn({ id: 'tlreset', label: 'RESET', icon: GLYPHS.reset, cls: 'iw-btn--ghost iw-btn--small', sound: 'ui_toggle',
           accept: () => { commit(() => { L[orient] = JSON.parse(JSON.stringify(DEFAULT_LAYOUT[orient])); }, true); this._sfx('ui_confirm'); build(); } }),
         this._btn({ id: 'tldone', label: 'DONE', icon: GLYPHS.check, cls: 'iw-btn--primary iw-btn--small',
-          accept: () => { commit(() => {}, true); this._sfx('ui_confirm'); this._go('settings', { back: true }); } })));
+          accept: () => { commit(() => {}, true); this._sfx('ui_confirm'); this._popTo('settings'); } })));
     const el = h('div', { class: 'iw-screen iw-touchedit' },
       h('div', { class: 'iw-scrim-left' }),
       this._header('TOUCH LAYOUT', { sub: 'Portrait and landscape are saved separately' }),
       panel, stage,
       this._prompts([[['←', '→'], 'DPad', 'Choose'], ['Esc', 'B', 'Back']]));
-    return { el, wrap: true, initial: () => panel.querySelector('[data-nav]'), onBack: () => { this._go('settings', { back: true }); } };
+    return { el, wrap: true, initial: () => panel.querySelector('[data-nav]'), onBack: () => this._popTo('settings') };
   }
 
   // ================================================================ SCREEN: loading
@@ -2272,6 +2333,7 @@ export class Menus {
         let ctrl;
         if (r.type === 'link') ctrl = { el: h('span', { class: 'iw-row__link' }, 'VIEW', h('i', { html: GLYPHS.next })), accept: () => { this._sfx('ui_click'); this._go('howto'); } };
         else if (r.type === 'touchedit') ctrl = { el: h('span', { class: 'iw-row__link' }, 'EDIT', h('i', { html: GLYPHS.pencil })), accept: () => { this._sfx('ui_click'); this._go('touchedit'); } };
+        else if (r.key === '_profile') ctrl = { el: h('span', { class: 'iw-row__link' }, 'MANAGE', h('i', { html: GLYPHS.next })), accept: () => { this._sfx('ui_click'); this._go('profiles'); } };
         else if (r.type === 'touchreset') ctrl = { el: h('span', { class: 'iw-row__link' }, 'RESET', h('i', { html: GLYPHS.reset })), accept: () => { this._sfx('ui_toggle'); this._resetTouchLayout(); } };
         else if (r.type === 'slider') ctrl = this._slider(r, s[r.key]);
         else if (r.type === 'toggle') ctrl = this._toggle(r, s[r.key]);
@@ -2282,7 +2344,7 @@ export class Menus {
           ctrl = this._seg(options, s[r.key], (v) => this._setSetting(r.key, v));
           ctrl.accept = ctrl.cycle;
         }
-        const linkish = r.type === 'link' || r.type === 'touchedit' || r.type === 'touchreset';
+        const linkish = r.type === 'link' || r.type === 'touchedit' || r.type === 'touchreset' || r.key === '_profile';
         const row = h('div', { class: 'iw-row iw-rowin' + (linkish ? ' iw-row--link' : ''), style: { '--i': i, '--dir': dirSign } },
           h('div', { class: 'iw-row__label' }, h('i', { class: 'iw-row__pip' }), r.label),
           h('div', { class: 'iw-row__ctrl' }, ctrl.el));
