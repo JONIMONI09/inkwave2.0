@@ -157,7 +157,7 @@ class Game {
       if (G.netm) return;   // online: turf only comes from replicated splats, never from local-only cosmetic droplets
       const team = this._teamOfColor(color);
       if (team < 0) return;
-      G.paint.splat(this._tmpV.copy(point).addScaledVector(normal, 0.05), clamp(size * 2.4, 0.12, 0.45), team, { seed: Math.random() });
+      G.paint.splat(this._tmpV.copy(point).addScaledVector(normal, 0.05), clamp(size * 2.4, 0.12, 0.45), team, { seed: Math.random(), noZoneClaim: true });   // unattributed droplets claim turf but credit no actor
     };
     this._tmpV = new THREE.Vector3(); this._tmpC = new THREE.Color();
     this.rig = new CameraRig(camera);
@@ -207,7 +207,7 @@ class Game {
     window.__G = G;
     this.debug = {
       endMatch: (t = 0.5) => { if (this.match && !this.match.attract) this.match.time = t; },
-      paintRandom: (n = 400) => { const v = new THREE.Vector3(); for (let i = 0; i < n; i++) { v.set((Math.random() - 0.5) * 48, 0.4, (Math.random() - 0.5) * 86); G.paint.splat(v, 0.8 + Math.random() * 1.4, Math.random() < 0.5 ? 0 : 1); } },
+      paintRandom: (n = 400) => { const v = new THREE.Vector3(); for (let i = 0; i < n; i++) { v.set((Math.random() - 0.5) * 48, 0.4, (Math.random() - 0.5) * 86); G.paint.splat(v, 0.8 + Math.random() * 1.4, Math.random() < 0.5 ? 0 : 1, { noZoneClaim: true }); } },
       // deterministic stepping for audits: freeze(), then step(ms) advances the sim at a fixed 60 Hz and renders once
       freeze: () => { this.frozen = true; },
       unfreeze: () => { this.frozen = false; this.timer.update(this._lastTs); },

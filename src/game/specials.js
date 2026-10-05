@@ -50,7 +50,7 @@ function groundBelow(p, maxDown = 30) {
   return g.hit ? g.point.clone() : null;
 }
 // special ink counts as turf but never charges the special meter
-function paint(owner, pos, r, team) { const area = G.paint.splat(pos, r, team, { seed: Math.random() }); owner?.addTurfNoSpecial?.(area); return area; }
+function paint(owner, pos, r, team) { const zone = { area: 0 }; const area = G.paint.splat(pos, r, team, { seed: Math.random(), zoneOut: zone }); owner?.addTurfNoSpecial?.(area, zone.area); return area; }
 // damage everyone on the other team within `radius` of c (line of sight from c), falloff from dmgMax to dmgMin
 // Mega Stamp: the body's facing (it turns slower than the aim) and a front-arc test (is p within arcDeg of the facing?)
 function stampFwd(s) { return new THREE.Vector3(Math.sin(s.bodyYaw), 0, Math.cos(s.bodyYaw)); }

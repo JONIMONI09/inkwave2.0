@@ -285,6 +285,7 @@ export class PaintSystem {
     this._dryAcc = 0;
     this._floods = [];         // region floods in progress (flood())
     this._floodPrep = new Map();   // region → its cells sorted by distance from the front's centre + atlas quads
+    this.zoneAccum = [0, 0];   // Zone Control: in-zone claim area awaiting Actor.addTurf's takeZoneClaim (per team)
     this._initGPU();
   }
 
@@ -438,6 +439,7 @@ export class PaintSystem {
     r.setClearColor(cc, ca);
     this.grid.fill(0);
     this.counts[0] = this.counts[1] = 0;
+    this.zoneAccum[0] = this.zoneAccum[1] = 0;
     this.quads = 0;
     if (this.growing) this.growing.length = 0;
     if (this.rip) { for (let i = 0; i < RIP_N; i++) { this.rip[i * 4 + 3] = -99; this.ripP[i * 4 + 3] = 0.01; this._ripS[i] = 0; } }
@@ -482,6 +484,15 @@ export class PaintSystem {
     let claimed = 0;
     const entries = [];
     let wall = false;
+    // Zone Control: zoneTurf (results / XP) must only credit ink the splat actually leaves in the live zone. The
+    // test is the same inside-outline + height check zoneCells() builds regions with, so the credited cells are
+    // exactly the objective's own cells. Actor position / aim never matter — only where ink actually lands. The
+    // in-zone part travels to the actor either through opts.zoneOut (explicit: weapons / subs / specials funnels)
+    // or through the per-team accumulator takeZoneClaim() consumes (kit credit paths) — never both. Ordinary turf
+    // credit (claimed) is unaffected. Replayed remote splats and unattributed droplet paint (noZoneClaim) credit
+    // nobody: their owners' clients do their own accounting, same as turf stats.
+    const Z = !cosmetic && !opts.noZoneClaim && !nm?.applying && G.match?.zones && G.match.state === 'playing' ? G.match.zones : null;
+    const zoneTest = Z ? (x, y, z) => Z.active.zones.some((z2) => inRegion(z2.region, x, y, z)) : null;
     for (const bid of ids) {
       const b = this.level.blocks[bid];
       // quick reject by AABB distance
@@ -507,7 +518,7 @@ export class PaintSystem {
           const l = Math.hypot(sdu, sdv);
           if (l > 0.2) { sdu /= l; sdv /= l; sa = sAmt * l; } else if (kind === K_ROLL) { sdu = 1; sdv = 0; } else { sdu = sdv = 0; }
         }
-        if (!cosmetic) claimed += this._cpuSplat(f, lu, lv, rr, team, seed, sdu, sdv, sa, kind);
+        if (!cosmetic) claimed += this._cpuSplat(f, lu, lv, rr, team, seed, sdu, sdv, sa, kind, zoneTest, opts.zoneOut);
         entries.push(f, lu, lv, dn, sdu, sdv, sa);
         if (f.wall && rr > radius * 0.3) wall = true;
       }
@@ -607,9 +618,15 @@ export class PaintSystem {
     }
   }
 
-  _cpuSplat(f, lu, lv, r, team, seed, sdu, sdv, sa, kind) {
+  // Gameplay claim test for one splat's landing area on face f. Returns the newly claimed area in m² — but only
+  // where it counts: live turf cells (f.turf, not buried). Walls, ceilings and dead (buried) cells paint visually
+  // yet claim nothing, so they can never feed turf points, the special gauge or match coverage. When `zoneOut` is
+  // given (Zone Control), the area of the newly claimed cells that lie inside the live objective accumulates into
+  // it separately for the zoneTurf stat — it is a subset of `claimed`, never extra.
+  _cpuSplat(f, lu, lv, r, team, seed, sdu, sdv, sa, kind, zoneTest, zoneOut) {
     if (r <= 0.02) return 0;
     const val = team + 1;
+    const creditable = f.turf;   // walls / ceilings: visuals only, never credit
     const roll = kind === K_ROLL;
     const ext = roll ? r * (Math.hypot(BAND_L, BAND_W) + BAND_R + 0.05) : r * (1 + sa) * WOB_MAX;
     const i0 = Math.max(0, Math.floor((lu - ext) / f.cu)), i1 = Math.min(f.nu - 1, Math.floor((lu + ext) / f.cu));
@@ -637,12 +654,22 @@ export class PaintSystem {
         }
         const k = f.grid + j * f.nu + i;
         const prev = this.grid[k];
-        if (prev === val) continue;
+        if (prev === val) continue;                 // repainting our own ink claims nothing
         this.grid[k] = val;
+        if (!creditable || this.dead[k]) continue;   // wall / ceiling / buried paint is visible but not scoreable
         claimed += cellA;
-        if (f.turf && !this.dead[k]) {
-          if (prev) this.counts[prev - 1]--;
-          this.counts[team]++;
+        if (prev) this.counts[prev - 1]--;
+        this.counts[team]++;
+        if (zoneTest) {
+          // the same cell-centre test zoneCells() picked the objective's cells with — a cell counts as zone ink
+          // exactly when it belongs to the live zone, regardless of where its painter stood or aimed
+          const wx = f.origin.x + f.u.x * ((i + 0.5) * f.cu) + f.v.x * ((j + 0.5) * f.cv);
+          const wz = f.origin.z + f.u.z * ((i + 0.5) * f.cu) + f.v.z * ((j + 0.5) * f.cv);
+          const wy = f.origin.y + f.u.y * ((i + 0.5) * f.cu) + f.v.y * ((j + 0.5) * f.cv);
+          if (zoneTest(wx, wy, wz)) {
+            if (zoneOut) zoneOut.area += cellA;              // explicit funnel (weapons / subs / specials)
+            else this.zoneAccum[team] += cellA;              // kit credit paths: consumed by Actor.addTurf
+          }
         }
       }
     }
@@ -888,6 +915,15 @@ export class PaintSystem {
     return [this.counts[0] / this.turfTotal, this.counts[1] / this.turfTotal];
   }
 
+  // Zone Control: the in-zone claim area accumulated for `team` since the last take. Actor.addTurf calls this right
+  // after the splats it credits, so the pairing splat → credit is synchronous and exact (per-splat zone area either
+  // went into an explicit zoneOut object or waited here). Never call for paint you are not crediting to an actor.
+  takeZoneClaim(team) {
+    const z = this.zoneAccum[team] || 0;
+    this.zoneAccum[team] = 0;
+    return z;
+  }
+
   // Fractions of turf cells within radius of (x, z) near height y: { own, enemy, empty } relative to `team`.
   regionStats(x, y, z, radius, team, out = { own: 0, enemy: 0, empty: 0, n: 0 }) {
     out.own = out.enemy = out.empty = out.n = 0;
@@ -926,4 +962,19 @@ export class PaintSystem {
     this._floodPrep.clear(); this._floods.length = 0;
     this._floodInk.dispose(); this._floodWipe.dispose();
   }
+}
+
+// Is a world point inside a zone region (an outline polygon + a floor-height band)? Same test zoneCells() uses to
+// pick a zone's cells, so a splat is credited as zone ink exactly when it lands on the objective's own cells.
+function inRegion(region, x, y, z) {
+  if (y < (region.y0 ?? -2) - 1e-4 || y > (region.y1 ?? 6) + 1e-4) return false;
+  for (const poly of region.polys || []) {
+    let inside = false;
+    for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+      const [xi, zi] = poly[i], [xj, zj] = poly[j];
+      if ((zi > z) !== (zj > z) && x < ((xj - xi) * (z - zi)) / (zj - zi) + xi) inside = !inside;
+    }
+    if (inside) return true;
+  }
+  return false;
 }

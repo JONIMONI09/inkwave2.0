@@ -142,9 +142,47 @@ Findings are labelled per the verify-before-change policy.
   spam in the frame loop).
 - **All checks green after the pass:** `npm run check`, `npm run check-maps`, `npm run music`.
 
----
+### Gameplay-manager scoring audit — P1 fixes + regression tests (2026-10-05)
+Findings labelled per the verify-before-change policy; the task's confirmations (P1.1 zone credit, P1.2
+ineligible paint credit, P1.3 random tie-break) were each verified in the current code and call sites before
+fixing. Intentional behaviours were preserved untouched: special activation refills ink, 50 % special charge
+kept after a splat, passive special gain for the team not holding the zone, enemy ink slowing/damaging but
+never splatting on its own.
 
-## Remaining tasks
+- **P1.2 ineligible paint credit (confirmed):** `PaintSystem._cpuSplat` credited every grid cell it flipped,
+  including walls, ceilings and cells buried inside other geometry (`dead`), so wall paint fed turf points,
+  the special gauge and match coverage. Fix (src/world/paint.js): `creditable = f.turf` + `dead[k]` check —
+  ineligible surfaces still paint visually but claim nothing (`claimed += cellA` and the counts update move
+  behind the check; own-repaint still claims nothing first).
+- **P1.1 zone turf credit (confirmed):** `Match._zoneTurf` booked zoneTurf from the turf event, but the
+  payload's zone part was derived from `actor.pos` / `aimPoint` at call sites — standing outside the zone
+  spraying into it (or vice versa) mis-credited. Fix: paint.js now reports the in-zone part of each claim as
+  `zoneArea` in the turf event, using the exact per-cell test `zoneCells()` builds regions with (new module fn
+  `inRegion`), and `_zoneTurf` books only from that payload. The in-zone area reaches the event either via an
+  explicit `opts.zoneOut` funnel threaded through weapons/subs/specials/actor-impact call sites or via the
+  new per-team `PaintSystem.zoneAccum` consumed by `takeZoneClaim` inside `Actor.addTurf` (kit paths;
+  synchronous pairing makes it exact). Unattributed paint (`noZoneClaim`: landing droplets, debug splats) and
+  replayed remote splats credit nobody.
+- **P1.3 turf tie-break (confirmed):** `Match._judge` picked the winner of an exact 50/50 turf tie with
+  `Math.random()`. Fix: deterministic — team 0 (Alpha) wins an exact tie and the result carries the displayed
+  `+0.1 %` tie-break (`cov[0] += 0.001`, `result.tieBreak = true`); the zones-mode fallback winner is now
+  `Z.winner ?? 0` instead of a coin flip. Online: unchanged host-authoritative path (`_judge` runs on the
+  host only; guests receive `sendResult`), so all clients share the deterministic outcome.
+- **Docs:** `docs/EVENTS.md` — `turf` payload now `{ actor, area, zoneArea }`. `README.md` — new "Rules &
+  fairness notes" section (floor-only scoring, cell-based zoneTurf, deterministic Alpha tie-break, the
+  5.5 s respawn + 50 % special keep as intentional pacing).
+- **Tests:** new `test/scoring.test.mjs` (13 tests, wired as `npm test`): floor credit = coverage delta;
+  wall/ceiling zero credit with grid painted; buried cells zero credit; own repaint 0 / enemy repaint flips;
+  zoneOut in/out/straddle; takeZoneClaim consume-once; noZoneClaim guard; `_zoneTurf` payload-only +
+  gates; exact tie deterministic with tieBreak flag; near-ties no flag; source asserts that no random winner
+  fallback remains in match.js.
+- **Verification:** `npm test` 13/13, `npm run check`, `npm run check-maps` green. A full headless boot→
+  playing match could not complete inside this container's command cap (boot alone 74–160 s, highly
+  variable); boot reached the late load stages error-free. In-game verification runs via CI smoke.
+- **Priority 2 (documented, not changed):** spawn-protection break conditions — unverified against canon,
+  no evidence → no change. Super Jump flight time is distance-scaled (`s.dur = 1.15 + min(0.6, dist/80)`) —
+  plausible deviation from the canon constant flight; left as-is per brief. 5.5 s respawn documented as
+  intentional. Squid Roll/Surge remain optional future features (none implemented).
 
 - **Read the perf baseline and act on it** — the instrumentation (`__inkwave.perf.snapshot()`) is
   in but the numbers are not yet captured on a real PC or Android device; the first snapshot

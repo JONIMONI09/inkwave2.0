@@ -130,10 +130,15 @@ export class Actor {
   specialFrac() { return clamp(this.special / this.specialCost(), 0, 1); }
   specialReady() { return this.special >= this.specialCost() && !this.specialActive; }
 
-  addTurf(area) {
+  // zoneArea: the part of `area` that landed inside the live Zone Control objective. Callers that know it (the
+  // weapons / subs / specials funnels) pass it explicitly; everyone else pulls paint's per-team accumulator, which
+  // their splats just filled (the splat → credit pairing is synchronous, so the take is exact). Match._zoneTurf
+  // books it into the zoneTurf stat (objective play, results / XP) from the event payload.
+  addTurf(area, zoneArea) {
+    const zone = zoneArea ?? G.paint?.takeZoneClaim?.(this.team) ?? 0;
     if (area <= 0) return;
     this.stats.turf += area;
-    emit('turf', { actor: this, area });
+    emit('turf', { actor: this, area, zoneArea: zone });
     if (!this.specialActive) {
       const was = this.specialReady();
       this.special = Math.min(this.specialCost(), this.special + area * PLAYER.specialChargeRate);
@@ -226,7 +231,8 @@ export class Actor {
       attacker.stats.splats++;
       // burst into the attacker's ink
       _v.copy(this.pos); _v.y += 0.35;
-      attacker.addTurf(G.paint.splat(_v, 1.7, attacker.team, { seed: Math.random() }));
+      const zone = { area: 0 };
+      attacker.addTurf(G.paint.splat(_v, 1.7, attacker.team, { seed: Math.random(), zoneOut: zone }), zone.area);
     }
     this.character.setVisible(false);
     if (this.isLocal) rumble(this, 0.8, 0.6, 260);
@@ -824,7 +830,8 @@ export class Actor {
         this.grounded = false;
         this._resolve(false, this.pos.y + 0.4, false);
         if (!this.grounded) { this.grounded = true; this._resolve(false, this.pos.y, true); if (!this.grounded) this.vel.y = -6; }
-        this.addTurf(G.paint.splat(_v.copy(this.pos).setY(this.pos.y + 0.3), 1.4, this.team, { seed: Math.random() }));
+        { const zone = { area: 0 };
+        this.addTurf(G.paint.splat(_v.copy(this.pos).setY(this.pos.y + 0.3), 1.4, this.team, { seed: Math.random(), zoneOut: zone }), zone.area); }
         G.fx?.burst(this.pos, _v2.set(0, 1, 0), this.color, { count: 14, speed: 5, size: 0.09 });
         if (this.isLocal) emit('shake', { amount: 0.35 });
         rumble(this, 0.55, 0.45, 170);
@@ -900,14 +907,15 @@ export class Actor {
   _slamImpact(sp) {
     const c = this.pos;
     let area = 0;
-    area += G.paint.splat(_v.copy(c).setY(c.y + 0.3), sp.radius * 0.72, this.team, { seed: Math.random() });
+    const zone = { area: 0 };
+    area += G.paint.splat(_v.copy(c).setY(c.y + 0.3), sp.radius * 0.72, this.team, { seed: Math.random(), zoneOut: zone });
     for (let i = 0; i < 9; i++) {
       const a = (i / 9) * Math.PI * 2 + Math.random() * 0.3;
       const r = sp.radius * (0.55 + Math.random() * 0.3);
       _v.set(c.x + Math.cos(a) * r, c.y + 0.6, c.z + Math.sin(a) * r);
-      area += G.paint.splat(_v, 1.1 + Math.random() * 0.6, this.team, { seed: Math.random() });
+      area += G.paint.splat(_v, 1.1 + Math.random() * 0.6, this.team, { seed: Math.random(), zoneOut: zone });
     }
-    this.addTurfNoSpecial(area);
+    this.addTurfNoSpecial(area, zone.area);
     G.fx?.explosion(_v.copy(c).setY(c.y + 0.3), this.color, sp.radius);
     G.audio?.play('special_slam', { pos: c });
     emit('shake', { pos: c.clone(), amount: 1.0 });
@@ -923,7 +931,7 @@ export class Actor {
     }
   }
 
-  addTurfNoSpecial(area) { if (area > 0) { this.stats.turf += area; emit('turf', { actor: this, area }); } }
+  addTurfNoSpecial(area, zoneArea) { const zone = zoneArea ?? G.paint?.takeZoneClaim?.(this.team) ?? 0; if (area > 0) { this.stats.turf += area; emit('turf', { actor: this, area, zoneArea: zone }); } }
 
   // ------------------------------------------------------------------ facing
   // Critically-damped angular spring with a rate cap: small corrections are quick, big turns sweep with a smooth
