@@ -119,12 +119,37 @@ Findings are labelled per the verify-before-change policy.
   Regression test: repeated-call simulation passes (old: compounds, new: stable at 0.9/1.62/2.34/3.78
   for k = 0/0.25/0.5/1). In-browser test attempt blocked by this container (boot > 165 s under
   CPU contention); the game itself boots error-free in headless Chrome (verified repeatedly).
+- **CI smoke sandbox (confirmed by CI root-runner semantics, smoke job itself untested on a runner):**
+  the smoke job boots Chrome for Testing as root on `ubuntu-latest`, which refuses its sandbox
+  ("No usable sandbox"). `ci.yml`'s smoke step now sets `CHROME_ARGS: --no-sandbox` (step-level
+  only). `tools/play.mjs` already merged `CHROME_ARGS`; local runs stay sandboxed (the variable is
+  only read when set). Remaining CI risk: the runner's software-WebGL boot time vs `UNTIL_MS`.
+- **Hitch instrumentation baseline (work-plan §2 — implemented, module unit-verified, not yet
+  profiled on device):** new `src/core/perf.js`: a 600-frame ring with p50/p95/p99, a long-task
+  PerformanceObserver, spot timings for `match.update` / `render` / `paint.flush` / `nav.path`
+  (A*) / `zonePlan` / `minimap`, sampled `renderer.info` counters, and one rate-limited log line
+  per real hitch (dt ≥ 45 ms, ≥ 8 s apart). Read live via `__inkwave.perf.snapshot()` in DevTools
+  (hitch frames excluded from the ring: budget frames > 250 ms are filtered in `_frame`).
+  Module-verified headlessly (percentile math + spot aggregation exact); `Log.install()` hooks
+  window.onerror/unhandledrejection so a device nobody owns still leaves a crash trace.
+- **Loading-until-GO gate (implemented earlier in this session, code-verified):** the themed
+  loading screen stays up through stage build + shader warm-up + the intro fly-over and yields
+  only at the GO banner (`_matchGate` → `_gateDone`, `setLoading(1, 'GO!')`, 22 s safety
+  timeout) — first rendered frames of play are already warm, hiding first-shot compile spikes.
+- **Intelligent console logging (implemented earlier in this session):** `src/core/logger.js` —
+  `[inkwave:<tag>]` prefixes, `Log.occasional` rate limiting, `Log.steps` for load sequences,
+  `?verbose` for debug lines, crash hooks. All new diagnostics go through it (no bare console
+  spam in the frame loop).
 - **All checks green after the pass:** `npm run check`, `npm run check-maps`, `npm run music`.
 
 ---
 
 ## Remaining tasks
 
+- **Read the perf baseline and act on it** — the instrumentation (`__inkwave.perf.snapshot()`) is
+  in but the numbers are not yet captured on a real PC or Android device; the first snapshot
+  during a live match tells us whether `paint.flush`, `nav.path`, `zonePlan`, or the render pass
+  owns the hitches before any optimization is attempted.
 - **Lighthouse audit** — run a Lighthouse pass on the hosted build (performance, PWA-ish basics,
   accessibility of the menus) and fix what it reports.
 - **Real-device testing (blocks P1/P2 acceptance)** — the briefing's device acceptance criteria

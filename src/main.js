@@ -30,6 +30,8 @@ import { Minimap } from './game/minimap.js';
 import { Showcase } from './game/showcase.js';
 import { ZoneMarks } from './fx/zoneMarks.js';
 import { BOSS_MODE } from './boss/bossMode.js';
+import { Log } from './core/logger.js';
+import { Perf } from './core/perf.js';
 
 const params = new URLSearchParams(location.search);
 // dev-only: ?devstage lets an online-only stage (config onlineOnly — Cargo Terminal) boot as the backdrop and be walked
@@ -86,8 +88,10 @@ class Game {
     try { const { DioramaOverlay } = await import('./ui/diorama.js'); this.diorama = new DioramaOverlay(this.hud ? this.hud.el : this.uiRoot); } catch (e) { console.error('[inkwave] diorama', e); this.diorama = null; }
     this.hud?.setVisible(false);
     this.menus?.show('loading');
+    Log.install();   // uncaught errors / rejections leave a [inkwave:crash] trace
     this.bootMarks = [];
-    const progress = async (p, label) => { this.bootMarks.push([label, Math.round(performance.now() - t0)]); this.menus?.setLoading(p, label); await nextFrame(); };
+    const bootStep = Log.steps('boot');   // one line per boot step, with its duration
+    const progress = async (p, label) => { this.bootMarks.push([label, Math.round(performance.now() - t0)]); bootStep(label); this.menus?.setLoading(p, label); await nextFrame(); };
     await progress(0.05, 'Mixing ink…');
 
     // renderer / scene
@@ -195,7 +199,11 @@ class Game {
       this.api.startMatch({ mapId: map.id, difficulty: params.get('difficulty') || this.settings.difficulty, duration: +params.get('autostart') || undefined, mode: pm === 'boss' || pm === 'zones' ? pm : 'turf' });
     }
     this.bootMs = Math.round(performance.now() - t0);
+    Perf.init();
+    Log.info('boot', `ready in ${(this.bootMs / 1000).toFixed(1)}s · quality ${this.settings.quality}${this.isTouch ? ' · touch' : ''}`);
+    Log.debug('boot', this.bootMarks.map(([l, t]) => `${l} @${t}ms`).join(' · '));
     window.__inkwave = this; // debug/audit hook
+    window.__inkwave.perf = Perf; // work-plan §2 baseline: frame percentiles + spot timings
     window.__G = G;
     this.debug = {
       endMatch: (t = 0.5) => { if (this.match && !this.match.attract) this.match.time = t; },
@@ -566,8 +574,10 @@ class Game {
     on('match:count', ({ n }) => { this.hud?.countdown(n); G.audio?.play('final_count'); });
     on('match:state', ({ state, match }) => {
       if (match.attract || match !== this.match) return;
+      Log.info('match', `${state}${match.practice ? ' (practice)' : match.mode ? ` (${match.mode})` : ''}`);
       if (state === 'intro') this._intro();
       if (state === 'playing') {
+        this._gateDone();   // 100 % + fade the loading screen away exactly at the GO banner
         if (!match.practice) { this.hud?.banner('go'); G.audio?.play('go_horn'); }
         if (match.mode !== 'boss') this._playMusic('battle');   // boss mode: the boss audio director scores it by phase
         if (this.match.local) { this.rig.follow(this.match.local, true); }
@@ -688,7 +698,13 @@ class Game {
     G.audio?.init?.();
     G.audio?.duck?.(1, 0.01);   // a new stage picked from the practice pause menu starts un-ducked
     this.input.requestLock();
-    this.menus?.show(null);
+    // Loading gate: the themed loading screen stays up (instead of a black void) while the stage
+    // builds and shaders compile, holds through the intro fly-over and only gives way at the GO
+    // banner — so the first frames of play you actually see are already warm and spike-free.
+    const gate = (this._matchGate = { t0: performance.now(), map: opts.mapId, mode: opts.mode, done: false });
+    gate.safety = setTimeout(() => this._gateDone(true), 22000);   // never trap the player if 'playing' never fires
+    this.menus?.show('loading');
+    this.menus?.setLoading(0.04, 'Raising the arena…');
     await this._fade(1, 350);
     G.music?.stop?.(0.3); this._musicTrack = null;
     // start buffering this round's match song and the final-minute song while the world loads
@@ -705,6 +721,7 @@ class Game {
     }
     if (opts.mode === 'boss' && !mapBossOk(map.id)) opts.mode = 'turf';
     await this._buildWorld(map, opts.mode);   // no-op when this stage (+ mode variant) is already built
+    if (!gate.done) this.menus?.setLoading(0.45, 'Painting the turf…');
     const theme = mapTheme(map, opts.time);
     this.time = opts.time === 'dusk' ? 'dusk' : 'day';
     if (theme !== this.theme) {
@@ -722,12 +739,15 @@ class Game {
       autopilot: params.has('autopilot'), style: this.profile.style || null, noBots: mapNoBots(map.id),   // (devstage: a solo walk)
     }));
     m.setup();
+    if (!gate.done) this.menus?.setLoading(0.62, 'Tuning the tentacles…');
     await this._warmCharacters(m);
+    if (!gate.done) this.menus?.setLoading(0.82, 'Warming the ink…');
     this.minimap.setViewerTeam(0);
     G.mode = 'match';
     this.hud?.setVisible(false);
     this.hudPrompt = null; this._hintT = 0; this._hints = {};
     this.hud?.setPractice?.(practice);
+    if (!gate.done) this.menus?.setLoading(0.9, 'Get ready…');   // crawls toward 100 % during the intro
     m.start();
     if (practice) {
       // no intro fly-over: straight in, special charged so it can be tried right away
@@ -735,6 +755,26 @@ class Game {
       this.hud?.setVisible(true);
     }
     this._fade(0, 500);
+  }
+
+  // Loading gate end: 100 % exactly when the match says GO, one beat on it, then the screen steps
+  // aside. `force` (the 22 s safety timeout) skips the fanfare and just closes.
+  _gateDone(force = false) {
+    const gate = this._matchGate;
+    if (!gate || gate.done) return;
+    gate.done = true;
+    clearTimeout(gate.safety);
+    const finish = () => {
+      if (this._matchGate !== gate) return;
+      this._matchGate = null;
+      if (this.menus?.current === 'loading') this.menus?.show(null);
+    };
+    if (force) finish();
+    else {
+      this.menus?.setLoading(1, 'GO!');
+      setTimeout(finish, 700);   // one beat on 100 % / GO!, then away
+    }
+    Log.info('match', `${gate.map} · ${gate.mode} ready in ${((performance.now() - gate.t0) / 1000).toFixed(1)}s${force ? ' (forced)' : ''}`);
   }
 
   _inPractice() { return !!(this.match && this.match.practice && G.mode === 'match'); }
@@ -912,6 +952,7 @@ class Game {
   }
   async quitToMenu(screen = 'main') {
     clearTimeout(this._netEndT);
+    clearTimeout(this._matchGate?.safety);
     if (G.net && G.net.state !== 'offline' && G.net.state !== 'error') G.net.leave();
     this.input.exitLock();
     this.menus?.show(null);
@@ -1076,9 +1117,15 @@ class Game {
     if (this.frozen || this._building) return;
     this.fpsAcc += dt; this.fpsN++;
     if (this.fpsAcc > 0.5) { this.fps = Math.round(this.fpsN / this.fpsAcc); this.fpsAcc = 0; this.fpsN = 0; }
+    if (dt > 1 / 20) {   // ≥50 ms frames: a real hitch — 3 in a row = sustained, not one GC blip
+      this._slowN = (this._slowN || 0) + 1;
+      if (this._slowN === 3) Log.occasional('perf', 8000, `slow frame ${(dt * 1000) | 0}ms`, `mode ${G.mode}`, this.match ? `state ${this.match.state}` : '');
+    } else this._slowN = 0;
     this._dynRes(dt);
+    const rawDt = dt;   // perf wants the real frame time; the sim clamps below
     dt = Math.min(dt, 1 / 24);
     this._frame(dt);
+    Perf.frame(rawDt);   // hitch baseline: ring percentiles + long tasks + spot timings
   }
 
   // Display refresh estimate: 10th percentile of raw rAF intervals (rAF fires every vsync while frames keep up, and
@@ -1116,12 +1163,13 @@ class Game {
     const m = this.match;
     if (this.settings.quality === 'ultra' || document.hidden || !m || m.attract || m.state !== 'playing') { d.fast = 0; return; }
     const s = this.R.dynScale || 1, tgt = this._frameTarget() / 1000;
-    if (avg > tgt * 1.12 && s > this.R.dynFloor() + 0.01) { this.R.setDynamicScale(s - 0.125); d.fast = 0; }
-    else if (avg < tgt * 1.04 && s < 1 && d.ups < 2) { if (++d.fast >= 3) { this.R.setDynamicScale(s + 0.125); d.fast = 0; d.ups++; } }
+    if (avg > tgt * 1.12 && s > this.R.dynFloor() + 0.01) { this.R.setDynamicScale(s - 0.125); d.fast = 0; Log.occasional('perf', 10000, `dynamic res ↓ ${(100 * (s - 0.125)) | 0}%`, `(4s avg ${(avg * 1000) | 0}ms vs target ${(tgt * 1000) | 0}ms)`); }
+    else if (avg < tgt * 1.04 && s < 1 && d.ups < 2) { if (++d.fast >= 3) { this.R.setDynamicScale(s + 0.125); d.fast = 0; d.ups++; Log.occasional('perf', 10000, `dynamic res ↑ ${(100 * (s + 0.125)) | 0}%`, `(4s avg ${(avg * 1000) | 0}ms — recovered)`); } }
     else d.fast = 0;
   }
 
   _frame(dt) {
+    if (dt > 0.25) return;   // long budget frames (frozen / caught-up sim) are baseline noise
     const tA = performance.now();
     G.renderer.info.reset();
     G.time += dt;
@@ -1132,14 +1180,14 @@ class Game {
     // the online lobby / hub stand in their own full-frame set (showcase): the attract match behind them is neither
     // simulated nor drawn while it's covered — it resumes exactly where it was when the set fades away
     const setUp = !!this.showcase?.fullFrame;
-    if (m && !(setUp && m.attract)) {
+    if (m && !(setUp && m.attract)) Perf.spot('match.update', () => {
       m.updateController(dt);
       const sub = dt > 1 / 45 ? 2 : 1; // substep physics on slow frames
       for (let i = 0; i < sub; i++) m.update(dt / sub);
       if (!m.paused) { G.projectiles.update(dt); G.subs.update(dt); G.specials.update(dt); }
       if (m.attract) this._updateAttract(dt);
       else if (m.state === 'playing' && m.local?.alive && this.rig.mode !== 'follow' && this.rig.mode !== 'path') this.rig.follow(m.local, true);
-    }
+    });
     if (!m || !m.paused) G.fx.update(dt, G.camera);
     if (!m || !m.paused) this.fxHooks?.update?.(dt);
     if (m && !m.paused && !m.attract) this._ageDeathMarks(dt);
@@ -1169,8 +1217,9 @@ class Game {
     const orbReady = !!(loc && loc.specialActive && loc.specialActive.id === 'booyah' && loc.specialActive.charge >= 1);
     G.projectiles.updateArc(loc, !!(loc && loc.alive && (loc.weaponRunner.aimingSub || orbReady) && m.state === 'playing' && !m.paused));
     const tB = performance.now();
-    // paint → atlas, shader uniforms
+    // paint → atlas, shader uniforms (spot-timed for the perf baseline)
     G.paint.flush(dt);
+    Perf.record('paint.flush', performance.now() - tB);
     this.levelMat.userData.uniforms.uTime.value = G.time;
     // see-through window toward the local player
     {
@@ -1209,11 +1258,11 @@ class Game {
     sm.autoUpdate = false;
     this._frameN = (this._frameN || 0) + 1;
     if (this.settings.quality !== 'low' || (this._frameN & 1)) sm.needsUpdate = true;
-    if (!this._skipRender) {
+    if (!this._skipRender) Perf.spot('render', () => {
       if (!setUp) this.R.render();
       if (this.showcase.mode) sm.needsUpdate = true;
       this.showcase.render();
-    }
+    });
     const tC = performance.now();
     const ps = this.perf || (this.perf = { sim: 0, render: 0, calls: 0, tris: 0 });
     ps.sim += (tB - tA - ps.sim) * 0.05; ps.render += (tC - tB - ps.render) * 0.05;
@@ -1306,7 +1355,9 @@ class Game {
 
   _updateHud(dt) {
     const m = this.match, a = m.local, cam = G.camera;
+    const _mm0 = performance.now();
     this.minimap.update(dt);
+    Perf.record('minimap', performance.now() - _mm0);
     const w = a.weapon;
     // crosshair spread = the weapon's live cone (first-shot accurate, blooms with sustained fire / in the air)
     const vHalf = (G.camera.fov * Math.PI) / 360;

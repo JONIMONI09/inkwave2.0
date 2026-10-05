@@ -286,6 +286,12 @@
 .iw-progress__wave { position: absolute; inset: 0; border-radius: inherit; background: repeating-linear-gradient(115deg, rgba(255, 255, 255, .22) 0 10px, transparent 10px 22px); animation: iw-stripes .7s linear infinite; }
 .iw-progress__edge { position: absolute; left: calc(var(--u) * .8); right: calc(var(--u) * .8); top: 18%; height: 20%; border-radius: 999px; background: rgba(255, 255, 255, .45); }
 .iw-progress__pct { min-width: 4ch; font: 400 calc(var(--u) * 1.9) / 1 'Titan One', sans-serif; -webkit-text-stroke: .16em var(--k); paint-order: stroke fill; }
+.iw-progress__squid { position: absolute; top: 50%; left: 0; width: calc(var(--u) * 2.7); height: calc(var(--u) * 2.7); transform: translate(-50%, -50%); color: var(--a); filter: drop-shadow(0 1px 0 var(--k)); pointer-events: none; }
+.iw-progress__squid svg { width: 100%; height: 100%; display: block; animation: iw-squid-swim .5s ease-in-out infinite alternate; }
+@keyframes iw-squid-swim { from { rotate: -14deg; } to { rotate: 9deg; } }
+.iw-loading.is-done .iw-progress__pct { color: var(--a); }
+.iw-loading.is-done .iw-progress__squid { animation: iw-squid-pop .5s var(--spring); }
+@keyframes iw-squid-pop { 45% { scale: 1.5; rotate: -16deg; } }
 .iw-loading__label { font: 700 var(--fs-m) / 1 'Rubik', sans-serif; letter-spacing: .06em; color: rgba(255, 255, 255, .8); text-transform: uppercase; }
 .iw-loading__label.is-in { animation: iw-fade .3s; }
 .iw-tip { position: absolute; left: 50%; bottom: calc(var(--u) * 5.2); transform: translateX(-50%); display: flex; align-items: center; gap: calc(var(--u) * 1.2);
@@ -1126,7 +1132,7 @@ circle.iw-ico-cut { fill: var(--cut, #fff); }
 
 /* ------------------------------------------------------------------ reduced motion (light touch) */
 @media (prefers-reduced-motion: reduce) {
-  .iw-logo__l, .iw-drip path, .iw-drip__drop, .iw-bgblob, .iw-cursor__ring, .iw-btn--primary::before, .iw-res__splat svg, .iw-cred__endsplat, .iw-title__presstext { animation: none !important; }
+  .iw-logo__l, .iw-drip path, .iw-drip__drop, .iw-bgblob, .iw-cursor__ring, .iw-btn--primary::before, .iw-res__splat svg, .iw-cred__endsplat, .iw-title__presstext, .iw-progress__squid svg { animation: none !important; }
   .iw-in, .iw-rowin { animation-duration: .2s !important; animation-delay: 0s !important; }
   .iw-wipe__mark { display: none; }
 }
