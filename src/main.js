@@ -435,11 +435,19 @@ class Game {
   }
   _applyAudioVolumes() { G.audio?.setVolumes?.({ master: this.settings.master, music: this.settings.music, sfx: this.settings.sfx }); }
 
+  // The gameplay HUD is wanted only while the round is actually being played. Single authority for every caller:
+  // the match:state edges, and the loadout-over-live-match tuck in _onScreen (which must not resurrect a HUD that the
+  // intro or the judge deliberately hid).
+  _gameplayHudWanted() {
+    const m = this.match;
+    return !!(m && !m.attract && !m.paused && m.state === 'playing');
+  }
+
   _onScreen(s) {
     // the loadout opened mid-practice sits over the live stage: tuck the HUD away while it's up
     if (G.mode === 'match' && this.hud) {
       const hide = s === 'loadout';
-      if (hide !== !!this._hudTucked) { this._hudTucked = hide; this.hud.setVisible(!hide); }
+      if (hide !== !!this._hudTucked) { this._hudTucked = hide; this.hud.setVisible(!hide && this._gameplayHudWanted()); }
     } else this._hudTucked = false;
     if (!this.showcase) return;
     if (s === 'loadout') this.showcase.showLoadout(this.profile.weapon || 'shooter', G.teamColors[0], this.profile.style);
@@ -588,9 +596,20 @@ class Game {
       if (state === 'intro') this._intro();
       if (state === 'playing') {
         this._gateDone();   // 100 % + fade the loading screen away exactly at the GO banner
+        // The gameplay HUD (ink tank, minimap, reticle, squad) belongs to live play and nothing else: it stays
+        // hidden through the loading fade, the intro fly-over and the whole countdown, and comes up here — the one
+        // authoritative 'play has begun' edge — rather than on the intro's own wall-clock timer, which ran early on
+        // every stage (the intro lasts MATCH 4.2 s / BOSS_MODE.intro 7.2 s, so a fixed 3.0 / 5.6 s timer put the
+        // HUD on screen a second and a half before GO).
+        this.hud?.setVisible(!this._hudTucked && this._gameplayHudWanted());
         if (!match.practice) { this.hud?.banner('go'); G.audio?.play('go_horn'); }
         if (match.mode !== 'boss') this._playMusic('battle');   // boss mode: the boss audio director scores it by phase
         if (this.match.local) { this.rig.follow(this.match.local, true); }
+      }
+      if (state === 'judge') {
+        // Round over: the judge card draws in the HUD's own overlay layer, which is NOT hidden by setVisible(false),
+        // so hiding here takes the ink tank, minimap and reticle off the overview camera while the results UI stays.
+        this.hud?.setVisible(false);
       }
       if (state === 'finish') {
         const bossWon = match.mode === 'boss' && match.boss?.dead;   // the defeat already had its moment (boss:defeat)
@@ -761,9 +780,9 @@ class Game {
     if (!gate.done) this.menus?.setLoading(0.9, 'Get ready…');   // crawls toward 100 % during the intro
     m.start();
     if (practice) {
-      // no intro fly-over: straight in, special charged so it can be tried right away
+      // no intro fly-over: straight in, special charged so it can be tried right away (m.start() already flipped the
+      // match to 'playing', which is what raises the HUD)
       if (m.local) m.local.special = m.local.specialCost();
-      this.hud?.setVisible(true);
     }
     this._fade(0, 500);
   }
@@ -935,7 +954,6 @@ class Game {
     this.rig.dioFlip = team === 1;
     G.audio?.play('ready');
     setTimeout(() => { if (this.match?.state === 'intro') this.hud?.banner('ready'); }, 1700);
-    setTimeout(() => { if (this.match?.state === 'intro') this.hud?.setVisible(true); }, 3000);
     this._playMusic(null);
   }
 
@@ -1007,7 +1025,6 @@ class Game {
     this.rig.yaw = 0; this.rig.pitch = -0.12; this.rig.dioFlip = false;
     G.audio?.play('ready');
     setTimeout(() => { if (this.match === m && m.state === 'intro') this.hud?.banner('ready'); }, 5300);
-    setTimeout(() => { if (this.match === m && m.state === 'intro') this.hud?.setVisible(true); }, 5600);
     this._playMusic(null);
   }
   // round over: circle the boss (sinking, or roaring over a squad that ran out of time)
@@ -1053,7 +1070,7 @@ class Game {
     if (m.result?.mode === 'boss') return this._bossResults();
     this.hud?.hideSplatted?.();
     this.rig.overview();
-    this.hud?.setVisible(true);
+    this.hud?.setVisible(false);   // the judge card lives outside the hideable HUD (hud.js overLayer); the gameplay HUD does not
     const cov = m.result.coverage;
     // Zone Control: the final counts (the scores) and each team's leftover penalty (shown apart, like the HUD's "+N"), winner and how it was won
     let zr = null;
@@ -1284,8 +1301,9 @@ class Game {
     ps.calls = G.renderer.info.render.calls; ps.tris = G.renderer.info.render.triangles;
     // HUD
     if (m && !m.attract && this.hud && (m.state === 'playing' || m.state === 'intro' || m.state === 'finish')) this._updateHud(dt);
-    // touch controls live only during actual play (never over menus, pause, results or the attract stage)
-    this.touch?.setVisible(!!(m && !m.attract && !m.paused && !this.menus?.current && (m.state === 'playing' || m.state === 'intro' || m.state === 'finish')));
+    // touch controls live only during actual play (never over menus, pause, results or the attract stage) — and, like
+    // the gameplay HUD, not during the intro fly-over or after the round ends
+    this.touch?.setVisible(!!(m && !m.attract && !m.paused && !this.menus?.current && m.state === 'playing'));
     this.menus?.update?.(dt);
     this.input.endFrame();
   }
