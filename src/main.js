@@ -5,8 +5,9 @@ import { Renderer } from './core/renderer.js';
 import { Input } from './core/input.js';
 import { TouchControls, isTouchDevice } from './core/touch.js';
 import { loadLayout, saveLayout, activeOrientation } from './core/touch-layout.js';
+import { loadAccounts, saveAccounts, activeAccount, createAccount, deleteAccount, renameAccount, migrateProfile } from './core/profiles.js';
 import { mapTheme,
-  DEFAULT_SETTINGS, QUALITY, TEAM_PALETTES, COLORBLIND_PALETTE, TEAM_NAMES, WEAPONS, WEAPON_ORDER, WEAPON_SUCCESSOR, ZONES, SUB, SUBS, SUB_ORDER, SPECIALS, SPECIAL_ORDER,
+  DEFAULT_SETTINGS, DEFAULT_PROFILE, QUALITY, TEAM_PALETTES, COLORBLIND_PALETTE, TEAM_NAMES, WEAPONS, WEAPON_ORDER, WEAPON_SUCCESSOR, ZONES, SUB, SUBS, SUB_ORDER, SPECIALS, SPECIAL_ORDER,
   MAPS, DIFFICULTY, PLAYER, PROGRESSION, VERSION, MATCH, OFFLINE_MAPS, mapOfflineOk, mapNoBots, mapBossOk,
 } from './config.js';
 import { Level } from './world/level.js';
@@ -44,7 +45,6 @@ const REFRESH_RATES = [30, 48, 50, 60, 75, 90, 100, 120, 144, 165, 240]; // comm
 // ------------------------------------------------------------------------------------------ persistence
 function loadJSON(key, def) { try { const v = JSON.parse(localStorage.getItem(key)); return v ? { ...def, ...v } : { ...def }; } catch { return { ...def }; } }
 function saveJSON(key, v) { try { localStorage.setItem(key, JSON.stringify(v)); } catch { /* private mode */ } }
-const DEFAULT_PROFILE = { name: 'Player', level: 1, xp: 0, wins: 0, matches: 0, totalTurf: 0, weapon: 'shooter' };
 
 async function loadModule(path, stubName) {
   try { return await import(path); }
@@ -75,7 +75,12 @@ class Game {
     }
     // v1.1: fov became horizontal — migrate old vertical values once
     if (this.settings.fovMode !== 'h') { this.settings.fov = DEFAULT_SETTINGS.fov; this.settings.fovMode = 'h'; saveJSON('inkwave.settings', this.settings); }
-    this.profile = loadJSON('inkwave.profile', DEFAULT_PROFILE);
+    // local profiles: the account store owns the save from here on, and migrates the old single-profile key on first
+    // run so nobody loses progress. this.profile stays a live reference to the active account's profile object.
+    const acc = loadAccounts();
+    this.accounts = acc.accounts;
+    this.accountId = acc.activeId;
+    this.profile = activeAccount(this.accounts, this.accountId).profile;
     if (WEAPON_SUCCESSOR[this.profile.weapon]) this.profile.weapon = WEAPON_SUCCESSOR[this.profile.weapon];   // retired weapons
     const app = document.getElementById('app');
     this.uiRoot = document.getElementById('ui-root');
@@ -196,6 +201,11 @@ class Game {
     this.menus?.show(params.has('skipTitle') ? 'main' : 'title');
     // the online hub / lobby set loads in the background once the menus are idle (no arena flash on the first visit)
     if (!params.has('autostart')) setTimeout(() => { if (G.mode === 'menu') this.showcase.preloadLobby?.(); }, 2500);
+    // Settings → Optimize → Pre-warm on the menu. There is no asset cache in the game (everything is procedural),
+    // so what "pre-warm" honestly means is: run the SAME shader compilation the match start runs, while the player
+    // is sitting in a menu instead of during a countdown. It is the existing machinery — Character.warmAll and the
+    // showcase warm-up — just moved earlier, so nothing new can break.
+    if (this.settings.prewarm) setTimeout(() => this._idlePrewarm(), 3000);
     this._applyAudioVolumes();
     requestAnimationFrame((t) => this._loop(t));
     if (params.has('autostart')) {
@@ -369,6 +379,52 @@ class Game {
   }
 
   // ---------------------------------------------------------------------------------------- menus api
+  // The single place a profile is persisted. Writes the account store (so a switch/switch-back keeps each profile
+  // separate) and keeps the legacy 'inkwave.profile' key in step, so a build without the store still finds a
+  // usable profile rather than starting over.
+  _saveProfile() {
+    const a = activeAccount(this.accounts, this.accountId);
+    if (a) a.profile = this.profile;
+    saveAccounts(this.accounts, this.accountId);
+  }
+
+  // Local profiles (browser storage only — nothing is uploaded). Used by Settings → Optimize → Local profile.
+  _profileList() {
+    return (this.accounts || []).map((a) => ({ id: a.id, name: a.name, active: a.id === this.accountId, created: a.created }));
+  }
+  _profileCreate(name) {
+    const r = createAccount(this.accounts, this.accountId, name);
+    this.accounts = r.accounts; this.accountId = r.activeId; this.profile = r.account.profile;
+    this._saveProfile();
+    this._applyProfileToSession();
+    return this._profileList();
+  }
+  _profileSwitch(id) {
+    const a = (this.accounts || []).find((x) => x.id === id);
+    if (!a) return this._profileList();
+    this.accountId = id; this.profile = a.profile;
+    this._saveProfile();
+    this._applyProfileToSession();
+    return this._profileList();
+  }
+  _profileRename(id, name) { renameAccount(this.accounts, id, name); this._saveProfile(); return this._profileList(); }
+  _profileDelete(id) {
+    const r = deleteAccount(this.accounts, this.accountId, id);
+    if (r.refused) return { list: this._profileList(), refused: true };
+    this.accounts = r.accounts; this.accountId = r.activeId;
+    this.profile = activeAccount(this.accounts, this.accountId).profile;
+    this._saveProfile();
+    this._applyProfileToSession();
+    return { list: this._profileList(), refused: false };
+  }
+  // a different profile can carry a different weapon and look: put it in the player's hands and on the podium
+  _applyProfileToSession() {
+    if (WEAPON_SUCCESSOR[this.profile.weapon]) this.profile.weapon = WEAPON_SUCCESSOR[this.profile.weapon];
+    const m = this.match;
+    if (m?.local) { m.local.weaponId = this.profile.weapon; m.local.subId = this._subFor(this.profile.weapon); m.local.specialId = this._specialFor(this.profile.weapon); m.local.character.setWeapon?.(this.profile.weapon); }
+    if (this.menus?.current === 'loadout') this.showcase?.showLoadout(this.profile.weapon, G.teamColors[0], this.profile.style);
+  }
+
   _menuApi() {
     const self = this;
     const api = (this.api = {
@@ -380,9 +436,9 @@ class Game {
         const p = self.profile;
         return { ...p, played: p.matches, xpToNext: PROGRESSION.xpForLevel(p.level) };
       },
-      setProfileName: (n) => { self.profile.name = String(n || 'Player').slice(0, 16); saveJSON('inkwave.profile', self.profile); },
+      setProfileName: (n) => { self.profile.name = String(n || 'Player').slice(0, 16); self._saveProfile(); },
       // locker look ({ hair, skin, outfit, eyes, hat, brows, … } — indices into character-style.js tables)
-      setProfileStyle: (st) => { self.profile.style = { ...(st || {}) }; saveJSON('inkwave.profile', self.profile); },
+      setProfileStyle: (st) => { self.profile.style = { ...(st || {}) }; self._saveProfile(); },
       getLoadout: () => ({ weapon: self.profile.weapon || 'shooter', sub: self._subFor(self.profile.weapon), special: self._specialFor(self.profile.weapon) }),
       setLoadout: ({ weapon, sub, special }) => {
         if (weapon !== undefined) {
@@ -391,7 +447,7 @@ class Game {
         }
         if (sub !== undefined) self.profile.sub = SUBS[sub] ? sub : null;
         if (special !== undefined) self.profile.special = SPECIALS[special] ? special : null;
-        saveJSON('inkwave.profile', self.profile);
+        self._saveProfile();
         if (self.menus?.current === 'loadout' && weapon !== undefined) self.showcase.showLoadout(weapon, G.teamColors[0], self.profile.style);
         self._applyPracticeLoadout();   // in practice the new kit is in your hands straight away
       },
@@ -415,6 +471,12 @@ class Game {
       rematch: () => self.startMatch(self.lastMatchOpts || {}),
       toMainMenu: () => self.quitToMenu(),
       onScreenChange: (s) => self._onScreen(s),
+      // local profiles (Settings → Optimize → Local profile). Browser storage only: no account server, no upload.
+      getProfiles: () => self._profileList(),
+      createProfile: (n) => self._profileCreate(n),
+      switchProfile: (id) => self._profileSwitch(id),
+      renameProfile: (id, n) => self._profileRename(id, n),
+      deleteProfile: (id) => self._profileDelete(id),
       playSound: (n) => { G.audio?.init?.(); G.audio?.play(n); },
     });
     return api;
@@ -432,6 +494,8 @@ class Game {
     if ('fullscreen' in partial && window.inkwaveNative) window.inkwaveNative.setFullScreen(!!partial.fullscreen);
     if ('master' in partial || 'music' in partial || 'sfx' in partial) this._applyAudioVolumes();
     if ('colorblind' in partial && G.mode !== 'match') this._setPalette(this._pickPalette());
+    // turning pre-warm on while sitting in the menus should take effect now, not at the next match start
+    if ('prewarm' in partial && partial.prewarm && G.mode === 'menu') { this._prewarmed = false; this._idlePrewarm(); }
   }
   _applyAudioVolumes() { G.audio?.setVolumes?.({ master: this.settings.master, music: this.settings.music, sfx: this.settings.sfx }); }
 
@@ -901,6 +965,24 @@ class Game {
   // Compile every shader variant a squidkid can use this match (all detail tiers, their cross-fades, squid form,
   // weapons) and build every kid's tier meshes while the screen is still faded out, so none of it lands mid-match.
   // Programs are shared, so after the first kid of each weapon the rest are a few ms each.
+  // Compile the player's own kit while the menus idle (Settings → Optimize → Pre-warm). Deliberately best-effort:
+  // it builds one throwaway kid off-screen purely to force the compile, so a later match start finds everything hot.
+  // Never blocks anything, never throws into boot, and is a no-op if the player turned the setting off.
+  _idlePrewarm() {
+    if (!this.settings?.prewarm || G.mode !== 'menu' || this._prewarmed) return;
+    this._prewarmed = true;
+    try {
+      const c = new this.CharacterClass({
+        color: G.teamColors[0].clone(), weapon: this.profile.weapon || 'shooter', style: { ...(this.profile.style || {}) },
+        name: 'prewarm', isLocal: false,
+      });
+      c.root.visible = false;
+      G.scene.add(c.root);
+      Promise.resolve(c.warmAll?.()).catch(() => {}).then(() => { G.scene.remove(c.root); c.dispose?.(); }, () => { G.scene.remove(c.root); c.dispose?.(); });
+    } catch (e) { console.warn('[inkwave] idle prewarm', e); }
+    this.showcase?._warmup?.();   // the showcase/locker/portrait shaders, same as after boot
+  }
+
   async _warmCharacters(m) {
     const jobs = m.actors.map((a) => a.character?.warmAll ? Promise.resolve(a.character.warmAll()).catch((e) => console.warn('[inkwave] warm', e)) : null).filter(Boolean);
     if (m.boss) jobs.push(Promise.resolve(m.boss.model.ready).then(() => Promise.all(m.boss.warm().map((o) => G.renderer.compileAsync(o, G.camera, G.scene)))).catch((e) => console.warn('[inkwave] boss warm', e)));
@@ -1047,7 +1129,7 @@ class Game {
     const before = { level: p.level, xp: p.xp, toNext: PROGRESSION.xpForLevel(p.level) };
     p.xp += gained; p.matches++; if (won) p.wins++; p.totalTurf += turf;
     while (p.xp >= PROGRESSION.xpForLevel(p.level)) { p.xp -= PROGRESSION.xpForLevel(p.level); p.level++; }
-    saveJSON('inkwave.profile', p);
+    this._saveProfile();
     const data = {
       mode: 'boss', win: won, percents: [cov[0] * 100, cov[1] * 100], colors: [G.teamHex[0], G.teamHex[1]], teamNames: this.palette.names || TEAM_NAMES,
       boss: { name: bo.name, defeated: won, time: bo.time, hpLeft: bo.maxHp ? bo.hp / bo.maxHp : 0, phase: bo.phase, maxHp: bo.maxHp },
@@ -1103,7 +1185,7 @@ class Game {
     const before = { level: p.level, xp: p.xp, toNext: PROGRESSION.xpForLevel(p.level) };
     p.xp += gained; p.matches++; if (won) p.wins++; p.totalTurf += turf;
     while (p.xp >= PROGRESSION.xpForLevel(p.level)) { p.xp -= PROGRESSION.xpForLevel(p.level); p.level++; }
-    saveJSON('inkwave.profile', p);
+    this._saveProfile();
     const data = {
       win: won, percents: [cov[0] * 100, cov[1] * 100], colors: [G.teamHex[0], G.teamHex[1]], teamNames: this.palette.names || TEAM_NAMES,
       players: m.actors.map((a) => ({ name: a.name, team: a.team, weapon: a.weaponId, turf: Math.round(a.stats.turf), splats: a.stats.splats, deaths: a.stats.deaths, isSelf: a.isLocal, bot: !!a.isBot, ...(zr ? { zoneTurf: Math.round(a.stats.zoneTurf || 0) } : {}) })),

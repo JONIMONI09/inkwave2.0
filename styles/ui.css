@@ -2903,6 +2903,30 @@ circle.iw-ico-cut { fill: var(--cut, #fff); }
 /* the dragged button follows the finger with no transition, everything else keeps the snap */
 .iw-tle__stage:active { cursor: grabbing; }
 
+/* ---- local profiles (Settings → Optimize → Local profile) ---- */
+.iw-tf {
+  position: absolute; left: calc(var(--u) * 3.6); top: calc(var(--u) * 10.4);
+  width: min(46vw, calc(var(--u) * 40)); display: flex; flex-direction: column;
+  gap: calc(var(--u) * 1.1); padding: calc(var(--u) * 1.6);
+}
+.iw-tf__note { margin: 0; opacity: .68; font-size: calc(var(--u) * 1.2); line-height: 1.45; }
+.iw-tf__new { display: flex; gap: calc(var(--u) * .8); }
+.iw-tf__name { flex: 1; min-width: 0; padding: calc(var(--u) * .7) calc(var(--u) * .9);
+  border-radius: var(--r); border: 2px solid rgba(255, 255, 255, .18); background: rgba(0, 0, 0, .3);
+  color: #fff; font: 700 calc(var(--u) * 1.35)/1 'Rubik', sans-serif; pointer-events: auto; }
+.iw-tf__name:focus { outline: none; border-color: var(--a-l); }
+.iw-tf__list { display: flex; flex-direction: column; gap: calc(var(--u) * .7); }
+.iw-tf__row { display: flex; align-items: center; gap: calc(var(--u) * .8);
+  padding: calc(var(--u) * .8) calc(var(--u) * 1); border-radius: var(--r);
+  background: rgba(255, 255, 255, .05); }
+.iw-tf__row.is-active { background: rgba(var(--a-rgb), .16); box-shadow: inset 0 0 0 2px rgba(var(--a-rgb), .5); }
+.iw-tf__who { display: flex; align-items: center; gap: calc(var(--u) * .7); min-width: 0; flex: 1; }
+.iw-tf__who i { width: calc(var(--u) * 2.4); height: calc(var(--u) * 2.4); color: var(--a-l); flex: none; }
+.iw-tf__who i svg { width: 100%; height: 100%; }
+.iw-tf__who b { font-family: var(--display); font-size: calc(var(--u) * 1.5); letter-spacing: .04em; }
+.iw-tf__who small { margin-left: auto; opacity: .55; font-size: calc(var(--u) * 1.05); letter-spacing: .1em; white-space: nowrap; }
+.iw-tf__ops { display: flex; gap: calc(var(--u) * .5); flex: none; }
+
 /* ---- compact HUD on small screens: keep every counter readable without shrinking gameplay view ---- */
 @media (max-width: 920px) {
   .iw-prompt { font-size: 13px; max-width: 62vw; }
