@@ -24,6 +24,11 @@ const browser = await puppeteer.launch({
     ...(process.env.CHROME_ARGS ? process.env.CHROME_ARGS.split(' ').filter(Boolean) : []),
   ],
   defaultViewport: { width: W, height: H, deviceScaleFactor: 1 },
+  // protocolTimeout: every CDP Runtime.evaluate fails after the default 180 s when the page's main
+  // thread is blocked — on CI's software WebGL the boot + up-front shader compile block it for
+  // minutes at a time, so the smoke printed "eval error" and died while the game was healthy
+  // (CI run 37457303668: reached `playing`, then two evaluate timeouts → SMOKE FAIL).
+  protocolTimeout: 600000,
 });
 // always take the browser down with us (an orphaned headless Chrome keeps spinning its WebGL loop at 100 % CPU)
 const kill = () => { try { browser.process()?.kill('SIGKILL'); } catch { /* gone */ } };
