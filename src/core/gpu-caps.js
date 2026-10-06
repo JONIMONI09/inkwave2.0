@@ -14,27 +14,39 @@ function probeHalfFloat(gl) {
   // WebGL2 exposes RGBA16F as a core-sized format; it is only usable as a colour attachment with an extension.
   const ext = gl.getExtension('EXT_color_buffer_float') || gl.getExtension('EXT_color_buffer_half_float');
   if (!ext) return false;
-  // WEBGL1 (three's fallback context) has no getInternalformatParameter — the extension's presence is the answer there.
-  if (typeof gl.getInternalformatParameter !== 'function') return true;
+  // WEBGL1 (three's fallback context) has no texStorage2D — the extension's presence is the answer there.
+  if (typeof gl.texStorage2D !== 'function') return true;
+  // Renderability is decided by an actual framebuffer attachment + completeness check — NOT by
+  // getInternalformatParameter(RENDERABLE): that pname is non-standard (Firefox warns INVALID_ENUM),
+  // and on Android Chromium force-enables formats so the probe can claim renderable while a real
+  // render misbehaves. The FBO check is what the spec actually defines.
+  let tex = null, fb = null;
   try {
-    return !!gl.getInternalformatParameter(gl.RENDERBUFFER, gl.RGBA16F, gl.RENDERABLE);
+    tex = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, tex);
+    gl.texStorage2D(gl.TEXTURE_2D, 1, gl.RGBA16F, 4, 4);
+    fb = gl.createFramebuffer();
+    gl.bindFramebuffer(gl.FRAMEBUFFER, fb);
+    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, tex, 0);
+    return gl.checkFramebufferStatus(gl.FRAMEBUFFER) === gl.FRAMEBUFFER_COMPLETE;
   } catch {
     return false;   // a driver that throws here is not one to trust with an HDR target
+  } finally {
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    if (fb) gl.deleteFramebuffer(fb);
+    if (tex) gl.deleteTexture(tex);
   }
 }
 
 /** Linear filtering of half-float textures: required by the bloom mip chain and the bloom taps. */
 function probeHalfFloatLinear(gl) {
   if (!probeHalfFloat(gl)) return false;
-  if (typeof gl.getInternalformatParameter !== 'function') return true;
-  try {
-    // Per the WebGL2 spec this returns null when the combination is not supported — so null means "cannot filter",
-    // and only `undefined` (a partial implementation) is allowed to fall back to "yes".
-    const f = gl.getInternalformatParameter(gl.TEXTURE_2D, gl.RGBA16F, gl.TEXTURE_FILTERABLE);
-    return f === undefined ? true : !!f;
-  } catch {
-    return true;
-  }
+  // ES 3.0 (WebGL2) makes 16-bit float textures filterable in core — once RGBA16F is renderable at
+  // all, LINEAR filtering is defined behaviour. (The old getInternalformatParameter call used the
+  // non-standard TEXTURE_FILTERABLE pname and warned INVALID_ENUM on Firefox.)
+  if (typeof WebGL2RenderingContext !== 'undefined' && gl instanceof WebGL2RenderingContext) return true;
+  // WebGL1 fallback: linear half-float filtering is its own extension
+  return !!gl.getExtension('OES_texture_half_float_linear');
 }
 
 /**

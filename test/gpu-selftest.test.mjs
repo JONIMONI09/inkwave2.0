@@ -48,8 +48,10 @@ await test('array-sampling or MRT failure → legacy tier (render correctly, tod
   assert.equal(verdictToTier(m, false), 'legacy');
 });
 
-await test('crashed self-test → legacy tier, never an assumed full path', () => {
-  assert.equal(verdictToTier({ ran: false, error: 'boom' }, false), 'legacy');
+await test('setup-error verdict → NO tier change (E-011): a broken test is not GPU evidence', () => {
+  // was: crash → legacy. That let shader bugs in the TEST ITSELF force every desktop GPU into the
+  // legacy path. Now only a validated, genuinely-failing capability test may downgrade.
+  assert.equal(verdictToTier({ ran: false, error: 'boom' }, false), null);
   assert.equal(verdictToTier(null, false), null, 'no verdict yet = no decision yet');
   assert.equal(verdictToTier(undefined, false), null);
 });

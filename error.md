@@ -5,6 +5,49 @@ keep the format below. Update alongside `session.md`.
 
 ---
 
+## E-011 · GPU self-test shaders were broken — every desktop GPU reported FAIL FAIL FAIL FAIL and got forced into the legacy tier
+
+**Status:** resolved (branch `fix/gpu-selftest-shaders-android`) — root cause CONFIRMED (driver shader logs + CI smoke output).
+
+### What happens
+Firefox on the GTX 980 (and every other desktop GPU) logs `[inkwave:gpu] array FAIL · mrt FAIL · srgb-att FAIL ·
+srgb-blend FAIL` → `render tier: legacy` → the texlib is skipped and maps render through the procedural fallback.
+Three.js floods the console with ShaderError messages, which fails the smoke test (`SMOKE FAIL`) and slowed boot
+(the tier ran after texlib creation had already paid for it).
+
+### Root cause (confirmed — the driver logs name each bug)
+1. `_mat()` prepended `out vec4 outColour;` to every fragment shader while T1/T3/T4 declared it themselves →
+   `outColour : redefinition`.
+2. T1 baked the layer index into the SOURCE via `fs.replace('uLayer;', …)` → `uniform int 0;` → syntax error.
+3. T2's shader got an extra unlocated output from `_mat()`; GLSL ES 3.00 requires explicit locations on ALL
+   outputs when there is more than one → link error.
+4. No COMPILE_STATUS/LINK_STATUS checks anywhere: these implementation bugs were reported as capability FAILs.
+5. `verdictToTier` mapped `ran: false` (crash) → legacy, so a broken test downgraded every GPU.
+6. `gpu-caps.js` used the non-standard `getInternalformatParameter(RENDERABLE/TEXTURE_FILTERABLE)` pnames
+   (Firefox: `INVALID_ENUM` / `pname must be SAMPLES` warnings).
+7. The tier was resolved only inside `_buildWorldNow`, AFTER boot had already built the texlib.
+
+### Fix
+- Each test shader declares its own outputs; `_mat()` adds only the precision line. T1's layer goes in as a REAL
+  uniform (`uniforms: { uLayer: { value: l } }`). T2 locates all three outputs explicitly.
+- `_assertProgram()` compiles + links every shader pair directly through gl BEFORE drawing; a failure throws a
+  SETUP error → `verdict.ran` stays false → `verdictToTier` returns **null** (tier untouched). Only a validated
+  capability FAIL may downgrade.
+- `GpuSelfTest.signature()` (renderer + GL version) caches the tier in `settings.gpuSig`; a driver/browser change
+  invalidates the cache and the test re-runs.
+- Boot resolves the tier BEFORE the texlib; legacy skips the texlib build entirely.
+- `gpu-caps.js` probes renderability via a real framebuffer attachment + `checkFramebufferStatus`, and WebGL2
+  core 16F filterability is used instead of the non-standard pname.
+
+### Tests
+`test/selftest-and-android.test.mjs` (13): tier handling of ERROR verdicts, shader-source hygiene (no injected
+output, no source-replaced uniform, explicit locations), ≥4 `_assertProgram` calls, boot order, signature cache,
+no `gl.getInternalformatParameter` calls. `test/compat.test.mjs` B7 stubs updated to the FBO-completeness model.
+**Device re-test pending:** Firefox/GTX 980 must now report PASS on all four (expected); Snapdragon results are
+still unknown until the corrected tests run there — record actuals, do not force the outcome.
+
+---
+
 ## E-010 · Boot crash: "can't access property 'getContext', r is null" during „Building the plaza…"
 
 **Status:** resolved (PR `fix/gpu-selftest-null-renderer`, 2026-10-06) — root cause CONFIRMED in code, not a guess.

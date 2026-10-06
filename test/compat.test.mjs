@@ -20,16 +20,22 @@ class FakeGL1 { }
 globalThis.WebGL2RenderingContext = FakeGL2;
 
 // A fake context is the whole point: the probe must answer from what the driver says it can do.
-const fakeGL = ({ float = true, filterable = true, parallel = false, webgl2 = true, samples = 4, ext = true } = {}) =>
+// Renderability is probed via a real framebuffer attachment + completeness check now (the old
+// getInternalformatParameter(RENDERABLE) pname was non-standard and untrustworthy), so the fake
+// implements that path; `fbComplete: false` simulates a driver that cannot render RGBA16F.
+const fakeGL = ({ float = true, filterable = true, parallel = false, webgl2 = true, samples = 4, ext = true, fbComplete = true } = {}) =>
   Object.assign(new (webgl2 ? FakeGL2 : FakeGL1)(), {
-    RENDERBUFFER: 0x8d41, TEXTURE_2D: 0x0de1, RGBA16F: 0x881a, RENDERABLE: 0x8d00, TEXTURE_FILTERABLE: 0x8b02,
-    MAX_SAMPLES: 0x8d57,
+    TEXTURE_2D: 0x0de1, RGBA16F: 0x881a, MAX_SAMPLES: 0x8d57,
+    FRAMEBUFFER: 0x8d40, FRAMEBUFFER_COMPLETE: 0x8cd5, FRAMEBUFFER_UNSUPPORTED: 0x8cdd, COLOR_ATTACHMENT0: 0x8ce0,
     getExtension: (n) => (n === 'KHR_parallel_shader_compile' ? (parallel ? {} : null)
       : n === 'EXT_color_buffer_float' || n === 'EXT_color_buffer_half_float' ? (float ? {} : null)
-        : n === 'EXT_texture_filter_anisotropic' ? (ext ? { MAX_TEXTURE_MAX_ANISOTROPY_EXT: 0x84ff } : null) : null),
+        : n === 'EXT_texture_filter_anisotropic' ? (ext ? { MAX_TEXTURE_MAX_ANISOTROPY_EXT: 0x84ff } : null)
+          : n === 'OES_texture_half_float_linear' ? (filterable ? {} : null) : null),
     getParameter: (p) => (p === 0x84ff ? 16 : p === 0x8d57 ? samples : 0),
-    // per spec: [] when not renderable, null when not filterable
-    getInternalformatParameter: (t) => (t === 0x8d41 ? (float ? [4] : []) : (filterable ? [4] : null)),
+    ...(webgl2 ? { texStorage2D() {} } : {}),   // WebGL1 has no texStorage2D — the probe keys on that
+    createTexture: () => ({}), bindTexture() {}, deleteTexture() {},
+    createFramebuffer: () => ({}), bindFramebuffer() {}, framebufferTexture2D() {}, deleteFramebuffer() {},
+    checkFramebufferStatus: () => (fbComplete ? 0x8cd5 : 0x8cdd),
   });
 
 await test('B7: a driver with renderable half-float reports it (WebGL2 path)', () => {
@@ -46,21 +52,20 @@ await test('B7: no colour-buffer extension → no half-float, cleanly', () => {
   assert.equal(c.halfFloatLinear, false, 'linear filtering is never claimed without the format itself');
 });
 
-await test('B7: half-float that cannot be filtered is reported as such (not silently "yes")', () => {
-  const c = probeCaps(fakeGL({ filterable: false }));
+await test('B7: a WebGL1 driver without the linear half-float extension reports no-filter (not silently "yes")', () => {
+  // WebGL2 core makes 16F filterable once renderable; on the WebGL1 fallback the OES extension decides
+  const c = probeCaps(fakeGL({ webgl2: false, filterable: false }));
   assert.equal(c.halfFloat, true);
   assert.equal(c.halfFloatLinear, false);
 });
 
-await test('B7: a driver whose internalformat query throws is not trusted with an HDR target', () => {
-  const gl = fakeGL();
-  gl.getInternalformatParameter = () => { throw new Error('GL_INVALID_OPERATION'); };
-  assert.equal(probeCaps(gl).halfFloat, false);
+await test('B7: a driver whose framebuffer is incomplete is not trusted with an HDR target', () => {
+  // renderability is decided by an actual framebuffer completeness check, not a query pname
+  assert.equal(probeCaps(fakeGL({ fbComplete: false })).halfFloat, false);
 });
 
-await test('B7: WebGL1 (no getInternalformatParameter) trusts the extension alone', () => {
+await test('B7: WebGL1 (no texStorage2D) trusts the extension alone', () => {
   const gl = fakeGL({ webgl2: false });
-  delete gl.getInternalformatParameter;
   const c = probeCaps(gl);
   assert.equal(c.webgl2, false);
   assert.equal(c.halfFloat, true);

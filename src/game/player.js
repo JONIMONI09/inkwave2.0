@@ -84,7 +84,9 @@ export class PlayerController {
     const mapUp = (G.rig?.mapK ?? 0) > 0.05 || inp.down('Tab') || inp.down('KeyM') || inp.padButton(8);
     const ldx = mapUp ? 0 : mdx, ldy = mapUp ? 0 : mdy;
     if (ldx || ldy) {
-      const sens = 0.0021 * (s.sensitivity ?? 1) * (s.aimAssistMouse ? friction : 1);
+      // touch look has its own multiplier: a thumb-drag distance is nothing like a mouse delta, and
+      // the mouse value was tuned for desktop pointer lock (Settings → Touch → Touch look sensitivity)
+      const sens = 0.0021 * (inp.lastDevice === 'touch' ? (s.touchSensitivity ?? s.sensitivity ?? 1) : (s.sensitivity ?? 1)) * (s.aimAssistMouse ? friction : 1);
       rig.yaw -= ldx * sens;
       rig.pitch -= ldy * sens * inv;
       lookActive = true;
