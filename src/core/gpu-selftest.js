@@ -66,6 +66,9 @@ export class GpuSelfTest {
       ran: false, arraySampling: false, mrt: false, srgbAttachment: false, srgbBlending: false,
       info: '', error: null,
     });
+    // no renderer (called before boot creates it) → no verdict; callers null-check and keep the
+    // current behaviour instead of downgrading the tier on a timing bug
+    if (!r) return null;
     const gl = r.getContext();
     const dbg = gl.getExtension('WEBGL_debug_renderer_info');
     verdict.info = `${dbg ? String(gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL)) : String(gl.getParameter(gl.RENDERER))} · GLES ${gl.getParameter(gl.VERSION)}`;
