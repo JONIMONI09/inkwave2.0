@@ -7,7 +7,7 @@
 import { G, emit } from '../core/ctx.js';
 import { MAPS, WEAPONS, WEAPON_ORDER, SUBS, SUB_ORDER, SPECIALS, SPECIAL_ORDER, MATCH, ZONES, BOT_NAMES, TEAM_PALETTES, mapNoBots, mapBossOk, bossFallbackMap, noBotsStartBlock } from '../config.js';
 import { randomStyle } from '../game/character-style.js';
-import { Transport } from './transport.js';
+import { createTransport } from './transport.js';
 import { NetMatch } from './netmatch.js';
 
 // no 0/O or 1/I (misread), and no W/A/S/D: those move the menu cursor, so any other key typed on the online hub can
@@ -88,7 +88,11 @@ export class NetSession {
     this.leave(true);
     this.error = null;
     this._setState('connecting');
-    const tr = (this.tr = new Transport());
+    // transport factory (relay default — byte-identical to the old direct construction); the P2P/
+    // manual tiers plug in here via ?net=p2p|manual and a settings preference later
+    const kind = new URLSearchParams(location.search).get('net') === 'manual' ? 'manual'
+      : new URLSearchParams(location.search).get('net') === 'p2p' ? 'p2p' : 'relay';
+    const tr = (this.tr = await createTransport(kind));
     tr.onControl = (o) => this._control(o);
     tr.onMessage = (from, d) => this._message(from, d);
     tr.onClose = (reason) => this._closed(reason);
