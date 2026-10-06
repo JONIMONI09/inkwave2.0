@@ -608,6 +608,7 @@ export const DEFAULT_SETTINGS = {
   sensitivity: 1.0,         // mouse multiplier 0.2..3
   padSensitivity: 1.0,
   invertY: false,
+  haptics: false,           // Android: brief vibration on hit/splat/special-ready (opt-in, needs navigator.vibrate)
   fov: 82,                  // horizontal FOV at 16:9, 65..100
   quality: 'high',          // 'low' | 'medium' | 'high' | 'ultra'
   shadows: true,

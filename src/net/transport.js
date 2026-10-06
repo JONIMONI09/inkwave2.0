@@ -4,6 +4,24 @@
 
 export const PROTO = 1;
 
+/**
+ * Transport factory — THE single injection point for the P2P fallback chain (relay → WebRTC → manual).
+ * Today only the relay transport exists and `kind: 'relay'` (the default) returns it byte-identical to
+ * before: `NetSession` used to construct `new Transport()` directly. The WebRTC (`src/net/peer.js`)
+ * and manual copy-paste (`src/net/manual.js`) tiers land here as dynamic imports so relay-only players
+ * never download them — a failing import falls back to the relay path rather than breaking online play.
+ */
+export async function createTransport(kind = 'relay') {
+  if (kind === 'relay') return new Transport();
+  try {
+    if (kind === 'p2p') return await import('./peer.js').then((m) => m.createPeerTransport());
+    if (kind === 'manual') return await import('./manual.js').then((m) => m.createManualTransport());
+  } catch (e) {
+    console.warn('[inkwave:net]', `transport '${kind}' unavailable, falling back to relay`, e?.message || e);
+  }
+  return new Transport();
+}
+
 // Where the relay lives: ?relay=… wins; a page served from this machine or the LAN talks to a local `wrangler dev`
 // relay on :8787; the public site talks to the deployed Worker.
 export const PROD_RELAY = 'wss://inkwave-net.inkwave.workers.dev';

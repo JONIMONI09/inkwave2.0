@@ -135,6 +135,7 @@ class Game {
     this.input = G.input = new Input(this.R.renderer.domElement);
     // touch devices (phones/tablets): on-screen controls instead of pointer lock + keyboard
     this.isTouch = isTouchDevice() && !params.has('no-touch');
+    this.menus?.setInputHint?.(this.isTouch ? 'touch' : 'keys');   // input-aware loading tips (T1-3)
     this.input.touchOnly = this.isTouch;
     if (this.isTouch) this.touch = new TouchControls(this.input, { onPause: () => this._touchPause() }).bindOrientation();
     if (this.isTouch) this.touch.applyLayout();   // the player's saved touch layout (per orientation)
@@ -687,9 +688,28 @@ class Game {
 
 
   // ---------------------------------------------------------------------------------------- events → HUD/audio
+  // Opt-in haptics (settings.haptics): rate-limited, meaningful events only. A device without
+  // navigator.vibrate does nothing; the 150 ms floor keeps hits/splats from stacking into a buzz.
+  _haptic(ms) {
+    if (!this.settings.haptics || typeof navigator === 'undefined' || !navigator.vibrate) return;
+    const now = performance.now();
+    if (now - (this._lastHaptic || 0) < 150) return;
+    this._lastHaptic = now;
+    try { navigator.vibrate(ms); } catch { /* denied or unsupported — silently fine */ }
+  }
+
   _bindEvents() {
     const self = this;
     let lastHitSnd = 0, lastHurtSnd = 0;
+    // Android haptics (opt-in, Settings → Touch): brief pulses only for meaningful events —
+    // a landed hit, being splatted, special ready. Feature-detected; does nothing on desktop
+    // and never touches gamepad rumble.
+    on('special:ready', ({ actor }) => { if (actor?.isLocal) self._haptic(30); });
+    on('hit', ({ attacker, victim }) => {
+      if (!this.settings.haptics) return;
+      if (attacker?.isLocal) self._haptic(15);
+      else if (victim?.isLocal) self._haptic(45);
+    });
     on('hit', ({ attacker, victim, damage, killed }) => {
       if (!this.match || this.match.attract) return;
       if (attacker?.isLocal) {
@@ -736,6 +756,7 @@ class Game {
         // the card shows what did it (hud.js splatCause): the attacker's main weapon, or the sub / special / the sea
         const by = attacker ? attacker.name : cause === 'water' ? null : 'enemy ink';
         this.hud?.showSplatted({ by, byColor: attacker ? G.teamHex[attacker.team] : '#6fd0ff', respawn: PLAYER.respawnTime, attacker: attacker || null, cause });
+        this._haptic(60);
         this.rig.mode = 'spectate';
         this.rig.spectate = { actor: attacker && attacker.alive ? attacker : null, pos: victim.pos.clone(), from: victim.pos.clone() };
         this.rig.lookAt.copy(victim.pos);

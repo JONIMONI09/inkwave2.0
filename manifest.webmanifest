@@ -1,0 +1,14 @@
+{
+  "name": "INKWAVE",
+  "short_name": "INKWAVE",
+  "description": "An original Splatoon-style 4v4 turf-war shooter that runs in your browser.",
+  "start_url": ".",
+  "display": "standalone",
+  "orientation": "landscape",
+  "background_color": "#0b0d12",
+  "theme_color": "#0b0d12",
+  "icons": [
+    { "src": "assets/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" },
+    { "src": "assets/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "maskable" }
+  ]
+}

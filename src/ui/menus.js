@@ -65,6 +65,20 @@ const TIME_INFO = {
   dusk: { label: 'DUSK', text: 'Low sun, long shadows, harbour lights.' },
 };
 
+// Touch-specific loading tips: shown ONLY when the game booted on a touch device (see inputHint) —
+// keyboard instructions like [SHIFT] are noise on a phone (T1-3, input-aware tips).
+const TOUCH_TIPS = [
+  'Hold [FIRE] to shoot and drag on the right half of the screen to aim.',
+  'Hold [SQUID] to dive into your own ink — you hide, refill and swim faster.',
+  'Hold [MAP], then tap a teammate pin to Super Jump to them.',
+  'Settings → Touch lets you move every button where your thumbs are.',
+];
+
+/** The loading-tip pool for an input kind: 'touch' gets gesture tips first, everything else the classic pool. */
+export function tipPoolFor(kind) {
+  return kind === 'touch' ? TOUCH_TIPS.concat(TIPS) : TIPS;
+}
+
 const TIPS = [
   'Swim in your own ink to zip around and refill your tank.',
   'Hold [SHIFT] to dive into your ink — you are nearly invisible while swimming.',
@@ -183,6 +197,7 @@ const SETTINGS_TABS = [
     { key: 'touchAutoAim', label: 'Auto-aim assist (touch)', type: 'toggle', help: 'Touch only: when the crosshair holds on a visible rival for a moment, your aim eases onto them — and with Auto-fire it shoots for you while it holds. Never fires through walls, never locks forever, disengages the instant the target breaks line of sight.' },
     { key: 'autoFireOnAim', label: 'Auto-fire with auto-aim (touch)', type: 'toggle', help: 'Touch only, needs Auto-aim assist: while the assist has a target in range and line of sight, fire for you. You keep full control — the assist releases the moment you steer away.' },
     { key: 'touchSensitivity', label: 'Touch look sensitivity', type: 'slider', min: 0.2, max: 3, step: 0.05, fmt: (v) => v.toFixed(2) + '×', help: 'How fast the camera turns while you drag on the right half of the screen. Separate from the mouse value — a thumb drag needs a different rate than pointer lock.' },
+    { key: 'haptics', label: 'Vibration (haptics)', type: 'toggle', help: 'Android only, off by default: a short pulse when you land a hit, get splatted or your special is ready. Devices without vibration simply do nothing.' },
     { key: '_touchedit', label: 'Touch layout', type: 'touchedit', help: 'Drag the on-screen buttons where your thumbs are, make them bigger or dimmer. Portrait and landscape are edited separately.' },
     { key: '_touchreset', label: 'Reset touch layout', type: 'touchreset', help: 'Put every button back where the game ships it.' },
   ] },
@@ -310,6 +325,9 @@ export class Menus {
       }
     }
   }
+
+  /** 'touch' | 'keys' | 'pad' — set once at boot (main.js knows the device); picks the loading-tip pool. */
+  setInputHint(kind) { this._inputHint = kind === 'touch' || kind === 'pad' ? kind : 'keys'; }
 
   setLoading(p, label) {
     this._loading.target = clamp(+p || 0, 0, 1);
@@ -1095,8 +1113,10 @@ export class Menus {
         h('div', { class: 'iw-in iw-in--up' }, label)),
       tip,
       h('div', { class: 'iw-corner iw-corner--br iw-in' }, `v${this._version()}`));
-    let tipIdx = Math.floor(Math.random() * TIPS.length), tipT = 0, lastPct = -1;
-    const setTip = () => { tipText.innerHTML = richText(TIPS[tipIdx % TIPS.length]); restartAnim(tipText, 'is-in'); };
+    // input-aware tips (T1-3): touch boots get gesture tips, everything else the keyboard pool
+    const pool = tipPoolFor(this._inputHint || 'keys');
+    let tipIdx = Math.floor(Math.random() * pool.length), tipT = 0, lastPct = -1;
+    const setTip = () => { tipText.innerHTML = richText(pool[tipIdx % pool.length]); restartAnim(tipText, 'is-in'); };
     setTip();
     return {
       el, noCursor: true,
