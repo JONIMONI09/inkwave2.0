@@ -20,6 +20,34 @@ import { MAIN_KITS } from './kits/registry.js';
 import { inSpawnDome } from './spawn-protect.js';
 
 const _v = new THREE.Vector3(), _v2 = new THREE.Vector3(), _fwd = new THREE.Vector3();
+
+// ---- splashAttack: shared fall-power helper for every descending area attack (E-013) -----------------
+// The higher the attack starts, the harder it lands: paint radius, damage and FX scale with the fall.
+// Pure function of { startY, pos, specialActive, superJumpState } so tests can pin the maths without a match.
+// superJumped: true when a Super Jump arc fed straight into the attack — the headline case gets its own
+// multipliers on top (big explosion ring + burst, heavier shake). The cheer orb must NEVER route through
+// here: it is a friendly gift, not a weapon, and height must not weaponise it.
+export const SPLASH_ATTACK = {
+  minFall: 1.0,          // below this the attack is at its shipped (flat) power
+  maxFall: 9.0,          // fall distance that reaches full bonus
+  radiusBonus: 0.5,      // +×paint radius at max fall
+  damageBonus: 0.6,      // +×damage at max fall
+  fxBonus: 0.45,         // +×explosion size at max fall
+  cap: 1.75,             // hard cap on every multiplier (super jump pairs get close to it)
+  superJumpRadius: 0.35, // extra ×radius when launched from a super jump arc
+  superJumpDamage: 0.25, // extra ×damage when launched from a super jump arc
+};
+export function splashAttack(actor, atPos) {
+  const s = SPLASH_ATTACK;
+  const startY = actor?.specialActive?.startY ?? actor?.pos?.y ?? atPos?.y ?? 0;
+  const fall = Math.max(0, startY - (atPos?.y ?? startY) - s.minFall);
+  const k = clamp(fall / s.maxFall, 0, 1);   // 0 at minFall, 1 at maxFall
+  const superJumped = !!(actor?.specialActive?.fromSuperJump);
+  const radius = Math.min(s.cap, 1 + k * s.radiusBonus + (superJumped ? s.superJumpRadius : 0));
+  const damage = Math.min(s.cap, 1 + k * s.damageBonus + (superJumped ? s.superJumpDamage : 0));
+  const fx = 1 + k * s.fxBonus;
+  return { radius, damage, fx, fall, superJump: superJumped, k };
+}
 const DOWN = new THREE.Vector3(0, -1, 0);
 const TAU = Math.PI * 2;
 const _ZERO_MOVE = Object.freeze(new THREE.Vector3());   // move input while planted after a dualies dodge roll
@@ -929,7 +957,11 @@ export class Actor {
     rumble(this, 0.25, 0.45, 120);
     if (id !== 'slam' && id !== 'storm') { G.specials.start(this, id); return; }
     if (id === 'slam') {
-      this.specialActive = { id, t: 0, phase: 'rise', armor: true, body: true, startY: this.pos.y };
+      // startY (for splashAttack fall power) and fromSuperJump: pressing the slam while still falling out of a
+      // super-jump arc (before touchdown) chains the two — E-013's headline pair, the landing becomes the big
+      // explosion. The arc ends here either way; the slam owns the fall from now on.
+      this.specialActive = { id, t: 0, phase: 'rise', armor: true, body: true, startY: this.pos.y, fromSuperJump: !!this.superJumpState };
+      this.superJumpState = null;
       this.vel.set(this.vel.x * 0.3, 11.5, this.vel.z * 0.3);
       this.grounded = false;
       this.character.trigger('special_leap');
@@ -981,26 +1013,34 @@ export class Actor {
 
   _slamImpact(sp) {
     const c = this.pos;
+    // fall-dependent power (E-013): the higher this slam started (rise + any elevation gained, or a super jump
+    // chained in), the harder the landing — bigger paint radius, wider sub-splats, more damage, bigger FX.
+    // The multiplier is clamped and SHARED (splashAttack) so every future falling-area attack behaves the same;
+    // the cheer orb deliberately does NOT use it (a gift can't be weaponised by height).
+    const p = splashAttack(this, c);
+    const radius = sp.radius * p.radius;
     let area = 0;
     const zone = { area: 0 };
-    area += G.paint.splat(_v.copy(c).setY(c.y + 0.3), sp.radius * 0.72, this.team, { seed: Math.random(), zoneOut: zone });
+    area += G.paint.splat(_v.copy(c).setY(c.y + 0.3), radius * 0.72, this.team, { seed: Math.random(), zoneOut: zone });
     for (let i = 0; i < 9; i++) {
       const a = (i / 9) * Math.PI * 2 + Math.random() * 0.3;
-      const r = sp.radius * (0.55 + Math.random() * 0.3);
+      const r = radius * (0.55 + Math.random() * 0.3);
       _v.set(c.x + Math.cos(a) * r, c.y + 0.6, c.z + Math.sin(a) * r);
-      area += G.paint.splat(_v, 1.1 + Math.random() * 0.6, this.team, { seed: Math.random(), zoneOut: zone });
+      area += G.paint.splat(_v, (1.1 + Math.random() * 0.6) * p.radius, this.team, { seed: Math.random(), zoneOut: zone });
     }
     this.addTurfNoSpecial(area, zone.area);
-    G.fx?.explosion(_v.copy(c).setY(c.y + 0.3), this.color, sp.radius);
-    G.audio?.play('special_slam', { pos: c });
-    emit('shake', { pos: c.clone(), amount: 1.0 });
-    emit('special:slam', { actor: this, pos: c.clone(), radius: sp.radius });
-    rumble(this, 0.9, 0.7, 320);
+    G.fx?.explosion(_v.copy(c).setY(c.y + 0.3), this.color, radius * p.fx);
+    if (p.superJump) { G.fx?.ring?.(_v.copy(c).setY(c.y + 0.3), new THREE.Vector3(0, 1, 0), this.color, { count: 14 }); G.fx?.burst?.(_v.copy(c).setY(c.y + 0.6), new THREE.Vector3(0, 1, 0), this.color, { count: 30 }); }
+    G.audio?.play('special_slam', { pos: c });   // same audio bank; the FX + shake carry the drama
+    emit('shake', { pos: c.clone(), amount: p.superJump ? 1.6 : 1.0 });
+    emit('special:slam', { actor: this, pos: c.clone(), radius });
+    rumble(this, p.superJump ? 1.2 : 0.9, 0.7, 320);
     for (const a of G.actors) {
       if (a.team === this.team || !a.alive) continue;
       const d = a.pos.distanceTo(c);
-      if (d > sp.radius) continue;
-      const dmg = d < sp.killRadius ? sp.damageMax : sp.damageMin + (sp.damageMax - sp.damageMin) * 0.3 * (1 - (d - sp.killRadius) / (sp.radius - sp.killRadius));
+      if (d > radius) continue;
+      const kr = sp.killRadius * p.radius;
+      const dmg = d < kr ? sp.damageMax * p.damage : sp.damageMin + (sp.damageMax * p.damage - sp.damageMin) * 0.3 * (1 - (d - kr) / (radius - kr || 1));
       _v.copy(a.pos); _v.y += 0.8;
       if (G.physics.los(_v2.copy(c).setY(c.y + 0.8), _v)) G.projectiles.applyHit(this, a, dmg, 'slam');
     }

@@ -5,6 +5,55 @@ progresses; keep the completed list factual and the remaining list actionable.
 
 Last updated: 2026-10-06
 
+### Results bar, fall-power splash attacks, fullscreen guard, whole-tree checker, README credits (2026-10-06, branch `feat/results-splash-guard`)
+
+**Results bar (styles/ui.css).** Coverage bars now neutral-fill by share of `pa/(pa+pb)` (no team colour on
+the track), and the landed winner bar "shoves" the loser aside with a spring-width animation
+(`.iw-res__cover.is-landed.is-a/.is-b`) — the pre-splash look is back, colour-free. Zone bars are fixed 50/50
+with ×2 pen compensation for the two-pen counting scheme.
+
+**splashAttack (src/game/actor.js, E-013).** New pure exported helper `splashAttack(actor, ctx)`: descending
+attacks (Tidal Slam etc.) get fall-height-dependent power — grace below 10 m, then linear up to a 1.75 cap,
+plus a chain bonus when a slam directly follows a super-jump (`fromSuperJump`). `_slamImpact` and the
+`_startSpecial` slam branch use it; the cheer orb deliberately does NOT (fixed celebration power). Super-jump
++ slam now produces a big ring + burst + shake 1.6.
+
+**Fullscreen guard (main.js, E-014).** When the browser force-exits fullscreen, the next pointerdown/keydown
+gesture re-requests it and a toast explains ("Fullscreen stays on — turn it off in Settings → Video").
+Self-cleaning listeners, 4 s timeout. Pause-on-unlock (`_onPointerUnlock`) was verified to already exist —
+no change needed there.
+
+**Prewarm logging.** `_idlePrewarm` / `_prewarmWeaponBatches` now log to console what they compile
+('compiling equipped weapon X…', '[i/total] compiling id…', ready-in-ms). Logging only — no behavioural
+change; the prewarm benefit itself is NOT yet measured (no GPU here).
+
+**tools/check-deps.sh + AGENTS.md rule.** New report-only whole-tree checker (syntax via node --check = only
+hard failure, local import targets, orphans, duplicate exports, heuristics). Ran green: 0 syntax errors,
+0 broken imports; the duplicate stage-helper exports are pre-explained in AGENTS.md. Rule added to AGENTS.md.
+
+**README.** Play link → https://jonimoni09.github.io/inkwave2.0/, clone URL + CI badge → JONIMONI09/inkwave2.0,
+new Credits section honouring the original jaydendavisnc/inkwave.
+
+**Lint pass.** oxlint 0.0.x: 412 warnings / 0 errors. Two report-only findings verified in source: duplicate
+`_bolts` key in kits/tracer.js:460/475 (second wins — real, harmless so far) and double `showHub` in
+showcase.js:1109/1689 (subclass override — intentional polymorphism). CI integration deliberately deferred.
+
+**Open (next session).** 1) dfgLUT SETUP ERROR: `can't access property "dfgLUT", m_uniforms is null` —
+three r186 vendor path `setProgram → refreshMaterialUniforms → refreshUniformsCommon`
+(three.module.js ~15246 → makeRotationFromEuler on envMapRotation); `dfgLUT` is a three internal uniform
+(getDFGLUT ~16076, applied ~18780); zero hits in game code. Firefox/GTX 980 ordering issue: an envMap-carrying
+material renders before its program/uniforms exist. Direction: set scene.environment before first render /
+guard envMap materials. 2) Desktop hitches persist (690/733/351 ms in menu) while Snapdragon tablet is smooth
+— Android-first pipeline wins on a desktop GPU; needs device profiling. 3) Shader caching + advanced perf
+without excluding Android: unmeasured. 4) Relay wss://inkwave-net.inkwave.workers.dev refuses connections
+(online play down). 5) `longtask` entryType unsupported in user's Firefox (harmless warning).
+
+**Checks.** `npm run check` exit 0; `npm test` 169 assertions / 17 suites / 0 failed (incl. new
+test/results-splash-guard.test.mjs 12/12); check-deps 0 failures; oxlint 0 errors. NOT verified on hardware
+(no GPU in container): results look, splash balance, fullscreen toast, prewarm benefit.
+
+---
+
 ### Match-start presentation, hitch watchdog, whole-kit pre-warm, full-viewport touch editor, PC touch lockout (2026-10-06, branch `feat/load-camera-watchdog-touch`)
 
 **User brief:** PLAY → loading screen first, then the camera fly-over; a watchdog cue during spikes; pre-warm

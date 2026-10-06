@@ -5,7 +5,61 @@ keep the format below. Update alongside `session.md`.
 
 ---
 
-## E-012 · Match-start presentation could hide the loading gate behind a 600 ms blank fade; spikes had no visible cue
+## E-013 · Splash attacks: fall power was binary and the cheer orb was accidentally scaled
+
+**Status:** resolved (branch `feat/results-splash-guard`, 2026-10-06) — maths unit-tested, device feel pending.
+
+### What happens
+Descending attacks (Tidal Slam etc.) dealt a fixed splash power regardless of fall height, and the cheer orb
+would have inherited the same scaling had it shared the call path.
+
+### Decision (documented, tested in test/results-splash-guard.test.mjs)
+- New pure helper `splashAttack(actor, ctx)` in src/game/actor.js: below a 10 m grace there is no bonus, above
+  it power scales linearly and caps at 1.75; a slam that directly follows a super-jump gets a chain bonus
+  (`fromSuperJump`). `_slamImpact` and the `_startSpecial` slam branch call it; the cheer orb does NOT —
+  celebration power stays fixed by design.
+- Prevention note: keep gameplay-power maths in pure helpers so it is testable without a renderer.
+
+## E-014 · Browser force-exits fullscreen with no way back and no explanation
+
+**Status:** resolved (branch `feat/results-splash-guard`, 2026-10-06).
+
+### What happens
+Firefox/Chrome can drop fullscreen (Esc policy, focus loss). The game stayed windowed with no hint.
+
+### Fix
+`fullscreenchange` guard in main.js: on unexpected exit, the next pointerdown/keydown gesture re-requests
+fullscreen and a toast explains it ("Fullscreen stays on — turn it off in Settings → Video"). Listeners
+self-clean, 4 s timeout. Pause-on-unlock already existed (`_onPointerUnlock`) and was left untouched.
+
+## E-015 · OPEN — three r186 crash: `can't access property "dfgLUT", m_uniforms is null` (Firefox / GTX 980)
+
+**Status:** OPEN — root-caused to vendor code path, NOT fixed.
+
+### Evidence (user log, 2026-10-06, Firefox, ANGLE D3D11 GTX 980)
+- `[inkwave]:gpu SETUP ERROR: can't access property "dfgLUT", m_uniforms is null` on every boot, repeated by
+  the GPU self-test (`runFresh`).
+- Stack: `makeRotationFromEuler` (three.core.js:10346) ← `refreshUniformsCommon` (three.module.js:15246) ←
+  `refreshMaterialUniforms` (15081) ← `setProgram` (18813) ← `renderBufferDirect` ← `render` via
+  EffectComposer/RenderPass from `src/core/renderer.js:233`.
+- `dfgLUT` is a three.js INTERNAL uniform (`getDFGLUT` ~three.module.js:16076, applied ~18780). `grep dfgLUT
+  src/` is empty — it is not game code. Also observed: a 404 fetch to `/dfgLUT` (a CSS/asset probe misfire).
+
+### Analysis
+An envMap-carrying material is being rendered before its WebGL program/uniform group exists
+(`m_uniforms === null`), so `refreshUniformsCommon` dies reading the env-map rotation. Firefox/ANGLE D3D11
+ordering issue; not reproducible in this container (no GPU).
+
+### Fix direction (next session)
+Ensure `scene.environment` / per-material `envMap` are assigned before the first composer render; guard or
+defer materials that carry an envMap in the showcase/prewarm path; consider upgrading/pinning the three r186
+vendor build. Do not edit `vendor/three/` blindly.
+
+## E-016 · OPEN — relay down: `wss://inkwave-net.inkwave.workers.dev` refuses connections
+
+**Status:** OPEN — online play cannot connect (`NS_ERROR_WEBSOCKET_CONNECTION_REFUSED`, both room join and
+create). The worker/relay deployment is down or unreachable; needs a worker redeploy or a status check on the
+Cloudflare side. No game-code change can fix this. · Match-start presentation could hide the loading gate behind a 600 ms blank fade; spikes had no visible cue
 
 **Status:** resolved (branch `feat/load-camera-watchdog-touch`, 2026-10-06) — code-verified, device look pending user check.
 
