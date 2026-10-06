@@ -3,7 +3,43 @@
 A living log of the work done on this fork and what is still open. Update this file as work
 progresses; keep the completed list factual and the remaining list actionable.
 
-Last updated: 2026-10-05
+Last updated: 2026-10-06
+
+### Stage-build smoothness: chunked build, precompiled shaders, surfaced failures (2026-10-06, branch `fix/hud-timing-spawn-protection`)
+**User reports.** (a) On PC the map transitions are not smooth and the E-001 optimizations changed nothing there;
+(b) on an Android tablet (Snapdragon) everything works except the maps, which "won't load".
+
+**Confirmed in code (`src/main.js _buildWorldNow`).** The whole arena build ran as one unbroken synchronous block
+(props → Level → Physics → lightmap await → PaintSystem + buildGeometry×2 → decor → nav → minimap → environment):
+- the loading overlay can only repaint *between* chunks, so its `setLoading` labels (0.45/0.62) never drew and the
+  fade froze mid-way on every map transition, on every device — this is the PC stutter;
+- the new stage's shaders compiled on the first rendered frames of the intro fly-over (boot's `compileAsync` never
+  re-ran for a rebuilt world);
+- on a phone the block is tens of seconds; the 22 s gate safety could force the loading screen away mid-build into
+  an empty world — which reads exactly as "the map won't load"; and any build exception stranded the player with
+  zero diagnostics (no try/catch around `_buildWorld` in `startMatch`).
+
+**Changes (src/main.js only, commit `c3c753b`).** Yields (`await nextFrame()`) between the heavy chunks — safe
+because `_loop` returns immediately while `_building`; `renderer.compileAsync(scene, G.camera)` behind the loading
+screen (the same call the boot path makes, with a `compile` fallback); `Log.steps('build')` per-chunk timings
+(`props (+0.4s)` … `shaders (+1.2s)`) in the console; the gate safety no longer forces while `_building`; a failed
+build now logs loudly, toasts `Stage failed to load: <reason>` and returns to the menu.
+
+**Incident: CI smoke step timeout (E-008).** The up-front compile costs minutes on SwiftShader; the green baseline
+step took 6 min 6 s, the new one was killed by `timeout-minutes: 8` before any assertion. Budget raised to 12 min;
+assertions untouched.
+
+**Checks run.** `npm run check` → syntax ok; `npm test` → 92 passed, 0 failed (10 suites). CI on `40aeb33` (PR #7)
+green end-to-end — the first green headless smoke in the repo's history (checks + smoke; deploy-pages correctly
+skipped).
+
+**Not verified on a device — needs the user.** PC transition smoothness and the tablet's map load need real
+hardware. On the tablet: after this change a failed stage build shows the reason as a toast, and per-chunk timings
+land in the console (`[inkwave:build]`). For a full picture, chrome://inspect (remote debugging over USB) from a PC
+reads the tablet's console directly. If the tablet still hangs *without* an error, the `build` step timings will
+show which chunk is slow on Adreno.
+
+---
 
 ### UI bug fixes: Esc loop in pushed sub-screens and a stuck judge hand-off (2026-10-05, branch `fix/hud-timing-spawn-protection`)
 Both bugs were user-reported with screenshots. Base still `a3309cf`; two files changed plus one new test suite.

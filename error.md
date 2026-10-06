@@ -5,6 +5,35 @@ keep the format below. Update alongside `session.md`.
 
 ---
 
+## E-008 · CI smoke step timeout (8 min) exceeded after the stage-build precompile
+
+**Status:** resolved — budget raised, verification run pending (2026-10-06)
+
+### What happens
+After commit `c3c753b` moved the per-stage shader precompile (`renderer.compileAsync`) into `_buildWorldNow`, the
+smoke job's "Boot the game and autopilot a match" step was killed by its own `timeout-minutes: 8` — before reaching
+any game assertion: no `smoke ->` line, no `[error]`, just the step timeout.
+
+### Root cause — confirmed (job timings)
+The green baseline (`40aeb33`) ran the step in **6 min 6 s**. The precompile moves the same shader-compile work from
+the first rendered frames to the loading screen — but `compile()` walks *every* scene object, so on CI's SwiftShader
+(software GL, synchronous compiles via `?shadercheck`) that is serial CPU work of minutes, and the 8-minute step
+budget — set when the smoke compiled lazily during rendering — no longer covered boot + precompile + stepped play.
+
+### Solution path
+Test-infrastructure budget only: `timeout-minutes: 8 → 12` on the smoke step, with the budget reasoning as a
+comment. Assertions untouched; the game change itself is the wanted fix for the transition stutter and frozen
+loading screens.
+
+### Verification
+The CI run on the follow-up commit must pass the smoke job end-to-end; until then this entry stays "pending".
+
+### Prevention
+A step's timeout must cover its worst documented budget: boot alone is 74–126 s on SwiftShader (E-007) and a
+full-scene compile on software GL is minutes. When a change moves work INTO a measured step, re-check the budget.
+
+---
+
 ## E-007 · CI smoke job fails on every run: sim cannot reach `playing` at ~1 rendered fps
 
 **Status:** fix pushed, CI verification pending (2026-10-05)
