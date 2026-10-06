@@ -261,6 +261,7 @@ class Game {
     this.layoutId = layoutId; this.worldKey = worldKey;
     this.mapDef = map;
     const q = QUALITY[this.settings.quality] || QUALITY.high;
+    const step = Log.steps('build');   // per-chunk timings: this build is <1 s on a desktop and can take tens of seconds on a phone — the log names the slow chunk
     // set dressing first: solid props hand back collision boxes that become part of the level (physics, nav, paint)
     const colliders = [];
     if (this.PropKit) {
@@ -274,8 +275,11 @@ class Game {
         this.props.build();
       } catch (e) { console.error('[inkwave] props failed', e); this.props = null; }
     }
+    step('props');
+    await nextFrame();   // the loading overlay can only repaint between chunks — one unbroken synchronous build is what freezes it (and reads as "the map won't load" on a phone)
     const level = (G.level = new Level(layoutFor(MAP_LAYOUTS[layoutId], mode), colliders));
     G.physics = new Physics(level);
+    step('level');
     const lightmap = await this._loadLightmap(level, worldKey);
     G.paint = new PaintSystem(G.renderer, level, { atlasSize: q.paintAtlas, maxDensity: q.paintAtlas >= 4096 ? 30 : 18 });
     this.murals.userData.setStage?.(layoutId);   // stage decals (murals.js) before the material reads the table
@@ -291,11 +295,20 @@ class Game {
     this.grateMesh = new THREE.Mesh(gg, this.grateMat);
     this.grateMesh.receiveShadow = true; this.grateMesh.visible = gg.index.count > 0;
     scene.add(this.grateMesh);
+    step('paint');
+    await nextFrame();
     this.decor = new Decor(scene, level);
     G.nav = new NavGraph(level, G.physics);
     this.minimap = new Minimap(level, G.paint);
+    step('nav');
+    await nextFrame();
     if (G.env?.rebuildForArena) G.env.rebuildForArena(level.bounds, this._footprint(level));
     else if (G.env?.setFootprint) G.env.setFootprint(this._footprint(level));
+    // precompile the new stage's shaders behind the loading screen (the same call the boot path makes): without it,
+    // every level/grate/prop/decor program compiles on the first rendered frames of the intro fly-over — the
+    // transition stutter on fast GPUs, and a silent extra wait on phones
+    try { await G.renderer.compileAsync(scene, G.camera); } catch { G.renderer.compile(scene, G.camera); }
+    step('shaders');
     if (G.teamColors[0]) this._setPalette(this.palette || this._pickPalette());
   }
 
@@ -796,7 +809,10 @@ class Game {
     // after 600 ms of measured preparation the themed loading screen steps in (no staged percentages, honest labels);
     // shorter builds never show one, and a late-arriving < 250 ms busy blip gets the small corner spinner instead.
     const gate = (this._matchGate = { t0: performance.now(), map: opts.mapId, mode: opts.mode, done: false });
-    gate.safety = setTimeout(() => this._gateDone(true), 22000);   // never trap the player if 'playing' never fires
+    // never trap the player if 'playing' never fires — but while a slow device is genuinely still building, keep the
+    // honest loading screen: a forced gate mid-build shows an empty world, which reads as "the map won't load"
+    const safety = () => { if (this._building) gate.safety = setTimeout(safety, 3000); else this._gateDone(true); };
+    gate.safety = setTimeout(safety, 22000);
     gate.slow = setTimeout(() => { if (!gate.done) { this.menus?.show('loading'); this.menus?.setLoading(0.1, 'Raising the arena…'); } }, 600);
     await this._fade(1, 350);
     G.music?.stop?.(0.3); this._musicTrack = null;
@@ -813,7 +829,21 @@ class Game {
       map = OFFLINE_MAPS[0];
     }
     if (opts.mode === 'boss' && !mapBossOk(map.id)) opts.mode = 'turf';
-    await this._buildWorld(map, opts.mode);   // no-op when this stage (+ mode variant) is already built
+    try {
+      await this._buildWorld(map, opts.mode);   // no-op when this stage (+ mode variant) is already built
+    } catch (e) {
+      // a stage that fails to build must not strand the player on the loading screen or drop them into an empty
+      // world: log it loudly, say it in the UI, and hand the menus back the way the match-end flow does
+      console.error('[inkwave] world build failed', e);
+      Log.error('build', opts.mapId, e?.message || e);
+      this._gateDone(true);
+      this.menus?.toast?.(`Stage failed to load: ${e?.message || e}`);
+      G.mode = 'menu';
+      this._startAttract();
+      this.menus?.show('main');
+      this._fade(0, 400);
+      return;
+    }
     if (!gate.done) this.menus?.setLoading(0.45, 'Painting the turf…');
     if (performance.now() - gate.t0 > 600 && !gate.done && this.menus?.current !== 'loading') this.menus?.showBusy();
     const theme = mapTheme(map, opts.time);
