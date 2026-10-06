@@ -10,16 +10,17 @@
 </p>
 
 <p align="center">
-  <a href="https://inkwave-aah.pages.dev"><b>▶ Play now</b></a> ·
+  <a href="https://jonimoni09.github.io/inkwave2.0/"><b>▶ Play now</b></a> ·
   <a href="#controls">Controls</a> ·
   <a href="#playing-online">Online</a> ·
   <a href="#running-locally">Run locally</a> ·
   <a href="#how-it-works">How it works</a> ·
+  <a href="#credits">Credits</a> ·
   <a href="CONTRIBUTING.md">Contributing</a>
 </p>
 
 <p align="center">
-  <a href="https://github.com/jaydendavisnc/inkwave/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/jaydendavisnc/inkwave/actions/workflows/ci.yml/badge.svg"></a>
+  <a href="https://github.com/JONIMONI09/inkwave2.0/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/JONIMONI09/inkwave2.0/actions/workflows/ci.yml/badge.svg"></a>
   <img alt="three.js r186" src="https://img.shields.io/badge/three.js-r186-000000?logo=three.js&logoColor=white">
   <img alt="No build step" src="https://img.shields.io/badge/build-none%20needed-2ea44f">
   <a href="LICENSE"><img alt="MIT" src="https://img.shields.io/badge/license-MIT-blue"></a>
@@ -100,7 +101,7 @@ A page opened from `localhost` or a LAN address uses that relay automatically; `
 There is no build step. Any static file server works; the included one also serves to your LAN and sends no-cache headers so module updates are never stale.
 
 ```bash
-git clone https://github.com/jaydendavisnc/inkwave.git
+git clone https://github.com/JONIMONI09/inkwave2.0.git
 cd inkwave
 npm install      # Electron + the headless tools
 npm start        # the desktop app (Electron)
@@ -173,6 +174,15 @@ counter in Settings → Graphics if you want to tune it further.
 
 Issues and pull requests are welcome. Read [CONTRIBUTING.md](CONTRIBUTING.md) for the project layout and the checks to run first.
 
+## Credits
+
+INKWAVE is a fork of [INKWAVE](https://github.com/jaydendavisnc/inkwave) by **[Jayden Davis](https://github.com/jaydendavisnc)** —
+all credit for the original game, its art direction and its engine design belongs there. This fork maintains and
+extends the original (device compatibility, touch support, netcode hardening); the upstream project is the source of
+truth for the game's design. INKWAVE is an independent project and is not affiliated with Nintendo; Splatoon is a
+trademark of Nintendo.
+
 ## License
 
-[MIT](LICENSE) © 2026 Jayden Davis. INKWAVE is an independent project and is not affiliated with Nintendo; Splatoon is a trademark of Nintendo.
+[MIT](LICENSE) © 2026 Jayden Davis. See the [original repository](https://github.com/jaydendavisnc/inkwave) for the
+canonical project.

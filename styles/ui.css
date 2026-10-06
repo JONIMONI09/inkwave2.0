@@ -676,8 +676,16 @@
   box-shadow: 0 0 0 3px #fff, 0 0 0 6px var(--k), 0 calc(var(--u) * .4) 0 6px rgba(0, 0, 0, .3); }
 .iw-cover::after { content: ''; position: absolute; inset: 0; background: linear-gradient(180deg, rgba(255, 255, 255, .3), transparent 45%); pointer-events: none; }
 .iw-cover__a, .iw-cover__b { position: absolute; top: 0; bottom: 0; }
-.iw-cover__a { left: 0; width: calc(var(--pa) * var(--ga, 1) * 100%); background: linear-gradient(180deg, var(--ta-light) -30%, var(--ta) 45%, var(--ta-dark)); overflow: hidden; }
-.iw-cover__b { right: 0; width: calc(var(--pb) * var(--ga, 1) * 100%); background: linear-gradient(180deg, var(--tb-light) -30%, var(--tb) 45%, var(--tb-dark)); overflow: hidden; }
+/* The two bars always FILL the whole track: each side gets its share of the painted ground (pa/pb are real
+   coverage fractions that don't sum to 1), stretched to meet in the middle — the unpainted remainder is the
+   track's neutral underlay, never a floating "air gap". The winner's share is the larger, and on landing the
+   winner's bar physically SHOVES the loser's side toward its edge (iw-cover-land shove below). */
+.iw-cover__a { left: 0; width: calc(var(--pa) / (var(--pa) + var(--pb) + 0.0001) * var(--ga, 1) * 100%); background: linear-gradient(180deg, var(--ta-light) -30%, var(--ta) 45%, var(--ta-dark)); overflow: hidden; }
+.iw-cover__b { right: 0; width: calc(var(--pb) / (var(--pa) + var(--pb) + 0.0001) * var(--ga, 1) * 100%); background: linear-gradient(180deg, var(--tb-light) -30%, var(--tb) 45%, var(--tb-dark)); overflow: hidden; }
+.iw-res__cover.is-landed.is-a .iw-cover__a { transition: width .45s var(--spring); width: calc(max(var(--pa), var(--pb)) / (var(--pa) + var(--pb) + 0.0001) * 100%); }
+.iw-res__cover.is-landed.is-a .iw-cover__b { transition: width .45s var(--spring); width: calc(min(var(--pa), var(--pb)) / (var(--pa) + var(--pb) + 0.0001) * 100%); }
+.iw-res__cover.is-landed.is-b .iw-cover__b { transition: width .45s var(--spring); width: calc(max(var(--pa), var(--pb)) / (var(--pa) + var(--pb) + 0.0001) * 100%); }
+.iw-res__cover.is-landed.is-b .iw-cover__a { transition: width .45s var(--spring); width: calc(min(var(--pa), var(--pb)) / (var(--pa) + var(--pb) + 0.0001) * 100%); }
 .iw-cover__num { display: none; }
 @keyframes iw-grow-l { from { clip-path: inset(0 100% 0 0); } }
 @keyframes iw-grow-r { from { clip-path: inset(0 0 0 100%); } }
@@ -1648,9 +1656,12 @@ circle.iw-ico-cut { fill: var(--cut, #fff); }
 @keyframes iw-pzone-otclk { 50% { opacity: .45; } }
 /* results: the countdown race (each bar = how far that team counted down; hatched = penalty it still owed) */
 .iw-cover--zones .iw-zbar__pen { position: absolute; z-index: 1; top: 0; bottom: 0; pointer-events: none; }
-.iw-cover--zones .iw-zbar__pen.is-a { left: calc(var(--pa) * var(--ga, 1) * 100%); width: calc(var(--qa) * var(--ga, 1) * 100%);
+/* zones bars already span the full track (done() from 0..0.5 each side); the raw --pa/--pb still drive the pens */
+.iw-cover--zones .iw-cover__a { width: 50%; }
+.iw-cover--zones .iw-cover__b { width: 50%; }
+.iw-cover--zones .iw-zbar__pen.is-a { left: calc(var(--pa) * 2 * 100%); width: calc(var(--qa) * 2 * 100%);
   background: repeating-linear-gradient(135deg, rgba(var(--ta-rgb), .95) 0 5px, rgba(var(--ta-rgb), .28) 5px 10px); }
-.iw-cover--zones .iw-zbar__pen.is-b { right: calc(var(--pb) * var(--ga, 1) * 100%); width: calc(var(--qb) * var(--ga, 1) * 100%);
+.iw-cover--zones .iw-zbar__pen.is-b { right: calc(var(--pb) * 2 * 100%); width: calc(var(--qb) * 2 * 100%);
   background: repeating-linear-gradient(45deg, rgba(var(--tb-rgb), .95) 0 5px, rgba(var(--tb-rgb), .28) 5px 10px); }
 .iw-cover--zones .iw-cover__mid { width: 5px; margin-left: -2.5px; background: repeating-linear-gradient(180deg, #fff 0 4px, #15121c 4px 8px); }
 .iw-res__cover--zones .iw-cover__names { align-items: center; }

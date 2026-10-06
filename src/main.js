@@ -161,6 +161,28 @@ class Game {
     }
     this.input.onKey = (e, repeat) => this._onKey(e, repeat);
     this.input.onUnlock = () => this._onPointerUnlock();
+    // Fullscreen guard (E-014): the browser can drop fullscreen on its own (Esc, an OS overlay, a system dialog).
+    // While the setting is ON we re-trigger it immediately, and the first re-entry shows a short toast so the
+    // user knows why the view snapped back (pressing Esc a second time within 1.2 s really does exit — the toast
+    // tells them the setting is in the menu). Re-entry needs a user gesture in most browsers, so the first
+    // attempt rides the NEXT pointerdown/keydown instead of failing silently.
+    this._fsReArmed = false;
+    document.addEventListener('fullscreenchange', () => {
+      const want = !!this.settings?.fullscreen && !window.inkwaveNative;
+      const on = !!document.fullscreenElement;
+      if (want && !on && G.mode === 'match' && this.match && !this.match.paused) {
+        if (this._fsReArmed) { this.menus?.toast?.('Fullscreen stays on — turn it off in Settings → Video'); this._fsReArmed = false; }
+        else this._fsReArmed = true;
+        const re = () => {
+          removeEventListener('pointerdown', re, true); removeEventListener('keydown', re, true);
+          if (this.settings?.fullscreen && !document.fullscreenElement && !window.inkwaveNative) {
+            document.documentElement?.requestFullscreen?.().catch(() => {});
+          }
+        };
+        addEventListener('pointerdown', re, true); addEventListener('keydown', re, true);
+        setTimeout(() => { removeEventListener('pointerdown', re, true); removeEventListener('keydown', re, true); }, 4000);
+      } else if (on) this._fsReArmed = false;
+    });
     // after a focus steal while the map was held, the next click on the game takes the mouse back (no pause detour)
     this.R.renderer.domElement.addEventListener('mousedown', () => {
       if (this._relock && G.mode === 'match' && this.match && !this.match.paused && !this.menus?.current) { this._relock = false; this.input.requestLock(); }
@@ -1139,16 +1161,23 @@ class Game {
   _idlePrewarm() {
     if (!this.settings?.prewarm || G.mode !== 'menu' || this._prewarmed) return;
     this._prewarmed = true;
+    // visible progress (user request): the console says WHAT is being pre-compiled and WHEN it is done,
+    // so "prewarm macht nichts" is checkable — each line is one real compile job with its duration.
+    Log.info('prewarm', `compiling equipped weapon '${this.profile.weapon || 'shooter'}'…`);
     try {
+      const t0 = performance.now();
       const c = new this.CharacterClass({
         color: G.teamColors[0].clone(), weapon: this.profile.weapon || 'shooter', style: { ...(this.profile.style || {}) },
         name: 'prewarm', isLocal: false,
       });
       c.root.visible = false;
       G.scene.add(c.root);
-      Promise.resolve(c.warmAll?.()).catch(() => {}).then(() => { G.scene.remove(c.root); c.dispose?.(); }, () => { G.scene.remove(c.root); c.dispose?.(); });
+      Promise.resolve(c.warmAll?.()).catch(() => {})
+        .then(() => { G.scene.remove(c.root); c.dispose?.(); Log.info('prewarm', `equipped weapon ready in ${(performance.now() - t0).toFixed(0)}ms`); },
+          () => { G.scene.remove(c.root); c.dispose?.(); });
     } catch (e) { console.warn('[inkwave] idle prewarm', e); }
     this.showcase?._warmup?.();   // the showcase/locker/portrait shaders, same as after boot
+    Log.info('prewarm', 'showcase + locker shaders warmed');
     this._prewarmWeaponBatches(); // then the REST of the kit list, idle-sized, so a loadout switch never hitches
   }
 
@@ -1167,6 +1196,8 @@ class Game {
       if (!running || i >= queue.length) return stop();
       if (G.mode !== 'menu') return stop();
       const id = queue[i++];
+      Log.info('prewarm', `[${i}/${queue.length}] compiling '${id}'…`);
+      const t0 = performance.now();
       try {
         const c = new this.CharacterClass({
           color: G.teamColors[0].clone(), weapon: id, style: { ...(this.profile.style || {}) },
@@ -1175,7 +1206,7 @@ class Game {
         c.root.visible = false;
         G.scene.add(c.root);
         Promise.resolve(c.warmAll?.()).catch(() => {}).then(
-          () => { G.scene.remove(c.root); c.dispose?.(); },
+          () => { G.scene.remove(c.root); c.dispose?.(); Log.info('prewarm', `[${i}/${queue.length}] '${id}' ready in ${(performance.now() - t0).toFixed(0)}ms`); },
           () => { G.scene.remove(c.root); c.dispose?.(); });
       } catch { /* a weapon that fails to build warm simply stays cold; the match warms on start */ }
       // idle slice: cap the batch to one kid per frame-sized gap so the menu keeps animating smoothly
