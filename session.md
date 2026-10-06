@@ -5,6 +5,39 @@ progresses; keep the completed list factual and the remaining list actionable.
 
 Last updated: 2026-10-06
 
+### GPU compatibility self-test, dark-map fix system, and touch auto-aim (2026-10-06, branch `fix/hud-timing-spawn-protection`)
+**User reports.** (a) On the Snapdragon tablet maps render dark (chrome://gpu evidence in the brief: Adreno 750,
+ANGLE GLES, `srgbBlendingBroken` ENABLED, untrustworthy renderability probes, broken MSAA readPixels);
+(b) Fortnite-mobile-style auto-aim wanted for touch, safe (no walls, no infinite lock). See error.md E-009 for the
+full write-up.
+
+**Built.** `src/core/gpu-selftest.js` (T1 array sampling, T2 MRT, T3 sRGB attachment, T4 sRGB blending; every
+readback on a non-MSAA RGBA8 target, sRGB comparisons expect ENCODED bytes, black readback = failure). Tier mapping
+full / linearAlbedo / legacy decided once per session in `_resolveGpuTier()` (before the first texlib build),
+cached in `settings.gpuTier`; `linearAlbedo` builds the albedo layer with `colorSpace: NoColorSpace` (texlib
+`linearAlbedo` option) so encode/decode cancel through a path the driver proved it handles. `gpuMode: 'legacy'`
+forces the procedural path. texlib validates framebuffer completeness and throws into the existing fallback.
+MSAA clamp fixed for falsy `maxSamples`. Settings → Optimize: "Graphics compatibility check" RUN button
+(`api.gpuCheck`) + "Compatibility mode" Auto/Always segment; `?gpudiag` logs renderer string + verdict at boot.
+Touch auto-aim/auto-fire in `player.js` (off by default, touch-only, ease steering, per-frame LOS via the shared
+`_assistTarget`, auto-fire self-releasing) with rows in Settings → Touch.
+
+**CI status on the branch during this work.** `40aeb33` (smoke fix) GREEN — first green smoke in repo history.
+`c3c753b` (stage-build chunking) broke the 8-min smoke budget → E-008, budget now 12 min (`d45c7e4`),
+verification run pending at the time of writing (empty commit `819ef95` fired it; the PR head had lagged origin
+before — re-check `gh pr view 7 --json headRefOid` if a run is missing).
+
+**Checks run.** `npm run check` → syntax ok; `npm test` → **116 passed, 0 failed** across **12 suites** (new:
+test/gpu-selftest.test.mjs 14, test/touch-autoaim.test.mjs 10; compat suite updated for the fixed clamp).
+
+**Not verified on a device — needs the user.** On the tablet: either `?gpudiag` in the URL (read the
+`[inkwave:gpu]` console lines via chrome://inspect) or Settings → Optimize → RUN the check. Report the 4 lines;
+the tier applies after a reload. If anything still looks wrong: Compatibility mode → Always (guaranteed correct,
+procedural surfaces). The self-test itself runs in <1 s on a real GPU (desktop must stay all-PASS and visually
+unchanged).
+
+---
+
 ### Stage-build smoothness: chunked build, precompiled shaders, surfaced failures (2026-10-06, branch `fix/hud-timing-spawn-protection`)
 **User reports.** (a) On PC the map transitions are not smooth and the E-001 optimizations changed nothing there;
 (b) on an Android tablet (Snapdragon) everything works except the maps, which "won't load".

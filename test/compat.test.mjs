@@ -86,8 +86,10 @@ await test('B7: the renderer falls back to an 8-bit target and disables bloom wi
     'the composer target is 8-bit unless bloom is on *and* the driver has half-float');
   assert.ok(/this\.bloom\.enabled = !!\(q\.bloom && this\.settings\.bloom && this\.hdr\)/.test(src),
     'bloom is off without HDR (it thresholds HDR values)');
-  assert.ok(/this\.caps\.maxSamples && this\.samples > this\.caps\.maxSamples/.test(src),
-    'MSAA is clamped to what the driver accepts');
+  // a falsy maxSamples (0, or a driver that reports nothing usable) must clamp to 0 too — the old
+  // truthy-guard let the requested count through when maxSamples was 0 (E-008 follow-up finding)
+  assert.ok(/!this\.caps\.maxSamples \|\| this\.samples > this\.caps\.maxSamples/.test(src),
+    'MSAA is clamped to what the driver accepts (also when maxSamples is falsy)');
 });
 
 await test('B7: the inline boot splash shows before the modules load and hands over once', async () => {

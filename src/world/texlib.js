@@ -1329,14 +1329,18 @@ float texlibCoverage(float a, vec2 uv, float texSize) {
 // Library construction
 // ---------------------------------------------------------------------------------------------------------------
 
-export async function createTextureLibrary(renderer, { size = 512 } = {}) {
+export async function createTextureLibrary(renderer, { size = 512, linearAlbedo = false } = {}) {
   const t0 = performance.now();
   const L = MATERIALS.length;
   const aniso = Math.min(16, renderer.capabilities.getMaxAnisotropy());
 
-  // one array target with three colour attachments (albedo sRGB, normal + orm linear), written in one MRT pass
+  // one array target with three colour attachments (albedo, normal + orm linear), written in one MRT pass.
+  // albedo is sRGB8_ALPHA8 on healthy drivers (hardware encode, the sampler decodes). linearAlbedo (the GPU
+  // self-test's sRGB tier) stores linear instead: the material multiplies the sampled colour by a linear tint
+  // and the renderer encodes once at output, so the visible result is identical — just through a path the
+  // driver demonstrably handles (its sRGB attachment path is the thing that failed the test).
   const out = new THREE.WebGLArrayRenderTarget(size, size, L, {
-    count: 3, type: THREE.UnsignedByteType, format: THREE.RGBAFormat, colorSpace: THREE.SRGBColorSpace,
+    count: 3, type: THREE.UnsignedByteType, format: THREE.RGBAFormat, colorSpace: linearAlbedo ? THREE.NoColorSpace : THREE.SRGBColorSpace,
     wrapS: THREE.RepeatWrapping, wrapT: THREE.RepeatWrapping,
     magFilter: THREE.LinearFilter, minFilter: THREE.LinearMipmapLinearFilter,
     generateMipmaps: true, anisotropy: aniso, depthBuffer: false, stencilBuffer: false,
@@ -1397,6 +1401,20 @@ export async function createTextureLibrary(renderer, { size = 512 } = {}) {
   }
   // wait for the GPU so the reported time is honest (one-pixel readback)
   renderer.readRenderTargetPixels(out, 0, 0, 1, 1, new Uint8Array(4), undefined, 2);
+
+  // framebuffer completeness of the REAL MRT target, before anything else consumes it: on Adreno/ANGLE
+  // stacks an incomplete array target fails silently (dark maps) instead of throwing — detect it here so
+  // main.js's existing "texlib failed → procedural fallback" path engages instead of rendering black
+  renderer.setRenderTarget(out, 0);
+  const gl = renderer.getContext();
+  const fbStatus = gl.checkFramebufferStatus(gl.FRAMEBUFFER);
+  renderer.setRenderTarget(prevRT);
+  if (fbStatus !== gl.FRAMEBUFFER_COMPLETE) {
+    out.dispose();
+    const err = `texlib framebuffer incomplete (0x${fbStatus.toString(16)}) — GPU cannot render the array MRT target`;
+    console.error('[inkwave] ' + err);
+    throw new Error(err);
+  }
 
   renderer.setRenderTarget(prevRT);
   renderer.autoClear = prevAutoClear;
