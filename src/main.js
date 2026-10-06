@@ -126,6 +126,8 @@ class Game {
       Log.info('gpu', describeVerdict(v));
       if (v.error) Log.error('gpu', v.error);
     }
+    // tier BEFORE anything builds textures (addendum rule 4): legacy skips the texlib entirely
+    this._resolveGpuTier();
     const scene = (G.scene = new THREE.Scene());
     const camera = (G.camera = new THREE.PerspectiveCamera(this.settings.fov, innerWidth / innerHeight, 0.15, 6500));
     camera.position.set(0, 40, -60);
@@ -136,6 +138,22 @@ class Game {
     this.input.touchOnly = this.isTouch;
     if (this.isTouch) this.touch = new TouchControls(this.input, { onPause: () => this._touchPause() }).bindOrientation();
     if (this.isTouch) this.touch.applyLayout();   // the player's saved touch layout (per orientation)
+    // portrait is not supported during a match (not enough vertical view for a turf shooter): a
+    // full-screen overlay asks for landscape; the match itself keeps running underneath
+    if (this.isTouch) {
+      const guard = document.createElement('div');
+      guard.id = 'iw-rotate';
+      guard.style.cssText = 'position:fixed;inset:0;z-index:90;display:none;align-items:center;justify-content:center;text-align:center;background:rgba(8,10,18,.85);color:#fff;font:800 20px Rubik,system-ui,sans-serif;padding:24px;letter-spacing:.02em';
+      guard.textContent = 'Rotate your device — INKWAVE plays in landscape.';
+      document.body.appendChild(guard);
+      const upd = () => {
+        const portrait = innerHeight > innerWidth * 1.05;
+        guard.style.display = (portrait && G.mode === 'match') ? 'flex' : 'none';
+      };
+      addEventListener('resize', upd);
+      addEventListener('orientationchange', upd);
+      this._rotGuardUpdate = upd;
+    }
     this.input.onKey = (e, repeat) => this._onKey(e, repeat);
     this.input.onUnlock = () => this._onPointerUnlock();
     // after a focus steal while the map was held, the next click on the game takes the mouse back (no pause detour)
@@ -162,13 +180,20 @@ class Game {
     this.theme = mapTheme(map, this.time);
     const q = QUALITY[this.settings.quality] || QUALITY.high;
     this.murals = await createMuralTexture();
-    try {
-      const { createTextureLibrary } = await import('./world/texlib.js');
-      // linearAlbedo: the self-test proved the driver mishandles sRGB array attachments — build the
-      // albedo layer linear instead (the sampler then returns the same linear values through a path
-      // the driver demonstrably gets right; no shader-side decode needed, encode/decode cancel)
-      this.texlib = await createTextureLibrary(G.renderer, { size: q.paintAtlas >= 4096 ? 512 : 256, linearAlbedo: this.gpuTier === 'linearAlbedo' });
-    } catch (e) { console.error('[inkwave] texture library failed — procedural fallback', e); this.texlib = null; }
+    if (this.gpuTier === 'legacy') {
+      // compatibility mode / proven-broken stack: the procedural material path — don't pay for a
+      // texlib build we would immediately throw away
+      this.texlib = null;
+      Log.info('gpu', 'skipping texture library (legacy render path)');
+    } else {
+      try {
+        const { createTextureLibrary } = await import('./world/texlib.js');
+        // linearAlbedo: the self-test proved the driver mishandles sRGB array attachments — build the
+        // albedo layer linear instead (the sampler then returns the same linear values through a path
+        // the driver demonstrably gets right; no shader-side decode needed, encode/decode cancel)
+        this.texlib = await createTextureLibrary(G.renderer, { size: q.paintAtlas >= 4096 ? 512 : 256, linearAlbedo: this.gpuTier === 'linearAlbedo' });
+      } catch (e) { console.error('[inkwave] texture library failed — procedural fallback', e); this.texlib = null; }
+    }
     await this._buildWorld(map);
     this.zoneMarks = new ZoneMarks(scene);   // Zone Control ground markings: build / clear themselves on 'match:state'
     await progress(0.4, 'Filling the harbor…');
@@ -274,14 +299,20 @@ class Game {
     if (this._gpuTierResolved) return;
     this._gpuTierResolved = true;
     if (this.settings.gpuMode === 'legacy') { this.gpuTier = 'legacy'; }
-    else if (this.settings.gpuTier) { this.gpuTier = this.settings.gpuTier; }
+    else if (this.settings.gpuTier && this.settings.gpuSig === (this.gpuTest?.signature?.() ?? '')) {
+      // cached verdict — but only while the GPU/browser signature is unchanged (driver update,
+      // different machine, browser switch all invalidate it)
+      this.gpuTier = this.settings.gpuTier;
+    }
     else {
       const v = this.gpuTest?.run();
       if (v) {
         Log.info('gpu', v.info || '');
         Log.info('gpu', describeVerdict(v));
         this.gpuTier = verdictToTier(v, false);
-        this.settings.gpuTier = this.gpuTier;
+        // only a VALID verdict may be cached: a setup error (broken test, lost context) is not
+        // evidence about the GPU and must re-run next boot (E-011)
+        if (this.gpuTier) { this.settings.gpuTier = this.gpuTier; this.settings.gpuSig = this.gpuTest.signature(); }
         saveJSON('inkwave.settings', this.settings);
       }
     }
@@ -572,7 +603,15 @@ class Game {
     Object.assign(this.settings, partial);
     saveJSON('inkwave.settings', this.settings);
     if ('quality' in partial || 'shadows' in partial || 'bloom' in partial) this.R?.applySettings(this.settings);
-    if ('fullscreen' in partial && window.inkwaveNative) window.inkwaveNative.setFullScreen(!!partial.fullscreen);
+    if ('fullscreen' in partial) {
+      if (window.inkwaveNative) window.inkwaveNative.setFullScreen(!!partial.fullscreen);
+      else if (document.documentElement?.requestFullscreen) {
+        // browser path (touch devices asked for fullscreen): the gesture came from the menu click,
+        // so the request is user-activated and allowed
+        if (partial.fullscreen && !document.fullscreenElement) document.documentElement.requestFullscreen().catch(() => { /* denied — stay windowed */ });
+        else if (!partial.fullscreen && document.fullscreenElement) document.exitFullscreen().catch(() => { /* already out */ });
+      }
+    }
     if ('master' in partial || 'music' in partial || 'sfx' in partial) this._applyAudioVolumes();
     if ('colorblind' in partial && G.mode !== 'match') this._setPalette(this._pickPalette());
     // turning pre-warm on while sitting in the menus should take effect now, not at the next match start
@@ -1327,6 +1366,7 @@ class Game {
   _loop(ts) {
     requestAnimationFrame((t) => this._loop(t));
     this._trackVsync(ts);
+    this._rotGuardUpdate?.();   // touch portrait guard follows the live mode (cheap boolean + cached style write)
     const cap = this.settings.fpsCap || 0;
     if (cap && ts !== undefined && this._lastTs !== undefined && ts - this._lastTs < 1000 / cap - 2) return;
     this._lastTs = ts;

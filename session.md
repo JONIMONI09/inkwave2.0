@@ -5,6 +5,35 @@ progresses; keep the completed list factual and the remaining list actionable.
 
 Last updated: 2026-10-06
 
+### E-011: GPU self-test shaders repaired, honest capability verdicts, Android polish (2026-10-06, branch `fix/gpu-selftest-shaders-android`)
+
+**The false-legacy bug (E-011).** Every desktop GPU (user's Firefox/GTX 980 evidence) reported FAIL FAIL FAIL FAIL
+and was forced into the legacy tier — because the self-test's OWN shaders were broken (`_mat()` injected a second
+`outColour`, T1's source-replace produced `uniform int 0;`, T2's extra unlocated output) and no compile/link check
+separated "our shader is broken" from "the GPU can't do it". The shader errors also failed the CI smoke. Fixed:
+per-test outputs, real uniform for T1, `_assertProgram()` compile/link verification before drawing, SETUP-ERROR
+verdicts never change the tier, `signature()`-cached tier (invalidated on GPU/browser change), tier resolved
+BEFORE the texlib (legacy skips that build), and `gpu-caps.js` probes via framebuffer completeness instead of the
+non-standard pnames. 13 new tests in `test/selftest-and-android.test.mjs`; compat B7 stubs updated.
+
+**Android.** Touch look sensitivity is now its own slider (Settings → Touch, `touchSensitivity`, applied when
+`lastDevice === 'touch'`); Fullscreen works in BROWSERS now (Standard Fullscreen API — previously Electron-only);
+portrait during a match shows a rotate-your-device overlay (match keeps running; guard follows the live mode in
+the frame loop).
+
+**PC spikes vs. smooth tablet (user question).** The user's own trace answers it: the PC run was in the FALSE
+legacy tier (broken self-test, E-011) — procedural fallback + full shader recompiles every boot, 85.6 s boot,
+`match.update` max 7.6 s and `render` max 20.5 s are those one-off build/compile blocks, not per-frame cost
+(steady-state p50 6.1 ms / ~120–225 calls). The tablet likely ran cached `gpuTier`/warm caches differently.
+With the tier fixed, expect the PC to return to the normal path; re-measure before attributing more.
+
+**GitHub Pages.** `configure-pages` fails with `Not Found`: Pages is not enabled on the repo. The managed App
+cannot create it (403) — the OWNER must do it once: repo Settings → Pages → Source: **GitHub Actions**.
+
+**Checks run.** `npm run check` → syntax ok; `npm test` → 134 assertions green, 14 suites, 0 failed.
+NOT measured: the corrected four-part verdict on real hardware (no GPU here) — Firefox/GTX 980 should PASS all
+four and keep the full tier; Snapdragon results remain unknown until re-tested.
+
 ### Boot-crash hotfix, CI smoke → warn-not-block, perf port analysis (2026-10-06, branches `fix/gpu-selftest-null-renderer` + `perf/hitch-first-1`)
 
 **E-010 boot crash fixed.** `boot()` built `GpuSelfTest(G.renderer)` before `G.renderer` existed → `null.getContext()`

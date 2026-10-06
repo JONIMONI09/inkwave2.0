@@ -182,6 +182,7 @@ const SETTINGS_TABS = [
   { id: 'touch', label: 'Touch', icon: 'gamepad', rows: [
     { key: 'touchAutoAim', label: 'Auto-aim assist (touch)', type: 'toggle', help: 'Touch only: when the crosshair holds on a visible rival for a moment, your aim eases onto them — and with Auto-fire it shoots for you while it holds. Never fires through walls, never locks forever, disengages the instant the target breaks line of sight.' },
     { key: 'autoFireOnAim', label: 'Auto-fire with auto-aim (touch)', type: 'toggle', help: 'Touch only, needs Auto-aim assist: while the assist has a target in range and line of sight, fire for you. You keep full control — the assist releases the moment you steer away.' },
+    { key: 'touchSensitivity', label: 'Touch look sensitivity', type: 'slider', min: 0.2, max: 3, step: 0.05, fmt: (v) => v.toFixed(2) + '×', help: 'How fast the camera turns while you drag on the right half of the screen. Separate from the mouse value — a thumb drag needs a different rate than pointer lock.' },
     { key: '_touchedit', label: 'Touch layout', type: 'touchedit', help: 'Drag the on-screen buttons where your thumbs are, make them bigger or dimmer. Portrait and landscape are edited separately.' },
     { key: '_touchreset', label: 'Reset touch layout', type: 'touchreset', help: 'Put every button back where the game ships it.' },
   ] },
@@ -193,7 +194,9 @@ const SETTINGS_TABS = [
     { key: 'showFps', label: 'Show FPS counter', type: 'toggle', help: 'Displays frames per second in the corner during matches.' },
     { key: 'fpsCap', label: 'Frame rate limit', type: 'seg', options: [[0, 'Max'], [60, '60'], [30, '30']], help: 'Max follows your display (up to 120 Hz on ProMotion Macs). A 60 cap gives steadier pacing and longer battery life.' },
     // desktop app only (the Electron preload provides window.inkwaveNative)
-    ...(typeof window !== 'undefined' && window.inkwaveNative ? [{ key: 'fullscreen', label: 'Fullscreen', type: 'toggle', help: 'Fill the whole display. Also ⌃⌘F or F11.' }] : []),
+    // browsers too now (touch devices asked for it): Electron mirrors through the native shell,
+    // everyone else uses the standard Fullscreen API on the document element
+    ...(typeof document !== 'undefined' && (window.inkwaveNative || document.documentElement.requestFullscreen) ? [{ key: 'fullscreen', label: 'Fullscreen', type: 'toggle', help: 'Fill the whole display. In the desktop app also ⌃⌘F or F11.' }] : []),
   ] },
   { id: 'optimize', label: 'Optimize', icon: 'bolt', rows: [
     { key: 'prewarm', label: 'Pre-warm on the menu', type: 'toggle', help: 'While you sit in the menus, compile the shaders and warm the pools your kit needs, so the first match of a session starts without a compile hitch. Costs a little battery.' },
