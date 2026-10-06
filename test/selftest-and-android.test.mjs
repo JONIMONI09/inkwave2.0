@@ -102,5 +102,38 @@ await test('a browser fullscreen path exists and a portrait guard protects the m
   assert.match(main, /_rotGuardUpdate\?\.\(\)/, 'the guard follows the live game mode');
 });
 
+// ---- E-011 addendum: the strictness gate itself must not manufacture a compile error -------------
+
+await test('_assertProgram prefixes every probe source with #version 300 es', () => {
+  // before the fix the gate compiled raw GLSL ES 3.00 sources WITHOUT a version directive, so the
+  // driver parsed ES 1.00 and every `in` line errored ("storage qualifier supported in GLSL ES
+  // 3.00 and above only") — the gate reported its own bug as a capability failure
+  const gate = selftest.slice(selftest.indexOf('_assertProgram(gl'), selftest.indexOf('_mat(fs'));
+  assert.match(gate, /src\.startsWith\('#version'\) \? src : `#version 300 es\\n\$\{src\}`/);
+  // and it must apply the prefix to BOTH stages (the vertex shader compiled first and failed first)
+  assert.match(gate, /gl\.shaderSource\(sh, withVersion\(src\)\)/);
+});
+
+await test('a SETUP-ERROR verdict is memoised for the session, but a fresh run is forced from Settings', () => {
+  // memo lives in the class, keyed by the GPU signature, never persisted to settings
+  assert.match(selftest, /this\._setupMemo = null;/, 'the memo starts empty per session');
+  assert.match(selftest, /this\._setupMemo = \{ sig: this\.signature\(\), verdict \};/);
+  assert.match(selftest, /this\._setupMemo && this\._setupMemo\.sig === this\.signature\(\)/);
+  // only a SETUP error may be memoised — a valid verdict is never short-circuited by this cache
+  assert.match(selftest, /_setupMemo = null;\s*\/\/ a fresh full run supersedes any earlier setup-error memo/);
+  // the Settings button forces a fresh run instead of replaying the memo
+  assert.match(main, /gpuTest\?\.runFresh\(\)/);
+  assert.match(selftest, /runFresh\(\) \{/, 'the fresh-run entry point exists');
+  assert.doesNotMatch(main, /saveJSON\('inkwave\.settings'[^)]*setupMemo/, 'a setup error is never persisted to settings');
+});
+
+await test('boot reports per-phase times with distinct progress labels', () => {
+  // Log.steps() suppresses same-label repeats: two identical "Warming up…" marks made "Ready!"
+  // report the whole compileAsync span as one number
+  assert.match(main, /progress\(0\.85, 'Compiling shaders…'\)/);
+  assert.match(main, /progress\(0\.93, 'Finalizing…'\)/);
+  assert.doesNotMatch(main, /'Warming up…'/, 'no duplicate label left');
+});
+
 console.log(`\n${pass} passed, ${fail} failed`);
 if (fail) process.exit(1);

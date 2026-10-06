@@ -233,14 +233,16 @@ class Game {
     this._setPalette(this._pickPalette());
     this._bindEvents();
     this._startAttract();
-    // warm up: compile every shader now so the first shot/splat never hitches
-    await progress(0.85, 'Warming up…');
+    // warm up: compile every shader now so the first shot/splat never hitches. Two DISTINCT labels:
+    // Log.steps() suppresses same-label repeats, so two identical "Warming up…" marks made "Ready!"
+    // report the whole compileAsync span as one number instead of per-phase times.
+    await progress(0.85, 'Compiling shaders…');
     this._warmup();
     // compile in parallel (KHR_parallel_shader_compile) so the loading screen keeps animating instead of freezing
     try { await G.renderer.compileAsync(scene, camera); } catch { G.renderer.compile(scene, camera); }
     for (const m of this._warmMeshes || []) { G.scene.remove(m); }
     this._warmMeshes?.[0]?.geometry.dispose(); this._warmMeshes = null;
-    await progress(0.93, 'Warming up…');
+    await progress(0.93, 'Finalizing…');
     for (let i = 0; i < 3; i++) { this._frame(1 / 60); await nextFrame(); }
     await progress(1, 'Ready!');
     await new Promise((r) => setTimeout(r, 250));
@@ -562,7 +564,9 @@ class Game {
       // Settings → Optimize → Graphics compatibility: run the self-test on demand and report per-test
       // results. Applies the recommended tier automatically unless the user forced a mode.
       gpuCheck: () => {
-        const v = this.gpuTest?.run();
+        // the Settings button ALWAYS forces a fresh run: a memoised session setup-error is stale by
+        // definition (the user asked for a check right now, not what boot said 3 minutes ago)
+        const v = this.gpuTest?.runFresh();
         if (!v) return { ran: false, error: 'self-test unavailable' };
         Log.info('gpu', v.info || '');
         Log.info('gpu', describeVerdict(v));

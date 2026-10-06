@@ -62,6 +62,11 @@ export class GpuSelfTest {
   constructor(renderer) {
     this.renderer = renderer;
     this.verdict = null;
+    // session-level SETUP-ERROR memo: a broken test or lost context is not GPU evidence, but it is
+    // deterministic within one session — re-running the same failing suite at boot, via ?gpudiag AND
+    // from the Settings button wasted the work up to 3×. Memo is keyed by the GPU signature, kept
+    // in memory only (never persisted to settings) and cleared by runFresh() (the Settings button).
+    this._setupMemo = null;   // { sig, verdict }
   }
 
   // Cheap GPU signature (renderer + GL version) for caching the verdict in settings: when EITHER
@@ -80,8 +85,12 @@ export class GpuSelfTest {
   // `info` (a human line for the log). Idempotent: call again any time (the Settings button does).
   // `ran: false` + `error` = SETUP ERROR (broken test or lost context) — callers must keep the
   // current tier; it is NOT evidence about the GPU.
+  // A SETUP-ERROR verdict is memoised per GPU signature for the session (see constructor): the
+  // second and third caller get the same record instead of re-running a suite that will fail the
+  // same way. A valid verdict is NEVER short-circuited here — tier caching is _resolveGpuTier's job.
   run() {
     const r = this.renderer;
+    if (this._setupMemo && this._setupMemo.sig === this.signature()) return this._setupMemo.verdict;
     const verdict = (this.verdict = {
       ran: false, arraySampling: false, mrt: false, srgbAttachment: false, srgbBlending: false,
       info: '', error: null,
@@ -104,13 +113,23 @@ export class GpuSelfTest {
       verdict.srgbBlending = this._t4SrgbBlending(gl);
       verdict.ran = true;
       verdict.allPass = verdict.arraySampling && verdict.mrt && verdict.srgbAttachment && verdict.srgbBlending;
+      this._setupMemo = null;   // a fresh full run supersedes any earlier setup-error memo
     } catch (e) {
       verdict.error = e?.message || String(e);
+      // memoise ONLY the setup error (never a valid verdict — that is the tier cache's business)
+      this._setupMemo = { sig: this.signature(), verdict };
     } finally {
       r.setRenderTarget(prevRT);
       r.autoClear = prevAutoClear;
     }
     return verdict;
+  }
+
+  // Forced fresh run (Settings → Graphics compatibility check): throws away the session setup-error
+  // memo so the user always sees what the driver says RIGHT NOW, not what it said at boot.
+  runFresh() {
+    this._setupMemo = null;
+    return this.run();
   }
 
   // ---- shader plumbing with compile/link verification ---------------------------------------------
@@ -119,10 +138,18 @@ export class GpuSelfTest {
   // machinery) and throw a setup error carrying the driver's log if either step fails. This is
   // what separates "our test shader is broken" (ERROR, no tier change) from "the GPU can't do it"
   // (FAIL): before E-011 was fixed, invalid test shaders were reported as capability failures.
+  //
+  // The probe sources are written in GLSL ES 3.00 (`in`/`out`, explicit output locations), but raw
+  // gl.shaderSource does NOT get the `#version 300 es` header three.js injects for the
+  // RawShaderMaterial(GLSL3) path — without it the compiler parses ES 1.00 and every `in` line
+  // errors with "storage qualifier supported in GLSL ES 3.00 and above only" (Firefox/GTX 980 and
+  // Android, E-011 addendum). The gate itself manufactured the failure it was meant to catch.
+  // Prefix only when absent, so a future source can still carry its own version directive.
   _assertProgram(gl, vs, fs) {
+    const withVersion = (src) => (src.startsWith('#version') ? src : `#version 300 es\n${src}`);
     const mk = (type, src) => {
       const sh = gl.createShader(type);
-      gl.shaderSource(sh, src);
+      gl.shaderSource(sh, withVersion(src));
       gl.compileShader(sh);
       if (!gl.getShaderParameter(sh, gl.COMPILE_STATUS)) {
         const log = gl.getShaderInfoLog(sh) || 'unknown compile error';
