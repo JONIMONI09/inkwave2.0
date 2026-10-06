@@ -5,6 +5,51 @@ progresses; keep the completed list factual and the remaining list actionable.
 
 Last updated: 2026-10-06
 
+### Match-start presentation, hitch watchdog, whole-kit pre-warm, full-viewport touch editor, PC touch lockout (2026-10-06, branch `feat/load-camera-watchdog-touch`)
+
+**User brief:** PLAY → loading screen first, then the camera fly-over; a watchdog cue during spikes; pre-warm
+should cover all scenes where it makes sense, working on both devices; a full-viewport touch editor with size
+control and always-working buttons; touch fully locked out on PC (and its auto-aim with it); stronger touch
+aim assist.
+
+**Match-start (main.js `startMatch`).** The themed loading screen now goes up the moment PLAY is pressed (the
+old `gate.slow` timer first showed it after 600 ms of blank fade). The stage builds behind it and `_gateDone`
+hides it exactly at the GO banner — the intro fly-over (`state === 'intro'` → `_intro()`) starts after the
+screen is gone, so the two never overlap. The 22 s safety timeout and the build-failure path are unchanged.
+
+**Hitch watchdog (main.js `_hitchWatchdog`, called from the loop).** Three ≥50 ms frames in a row during a live
+round show the corner busy spinner ("Catching up…"), NOT a full loading screen — a mid-match overlay would read
+as a load and cover the HUD. It only shows when no menu/loading screen is up (no overlap), and hides itself on
+the first good frame or when the round ends. The spinner's own 250 ms fade-in means a single GC blip never
+flashes it.
+
+**Pre-warm (main.js `_prewarmWeaponBatches`).** Analysis: the existing setting warms the equipped weapon +
+showcase. Extended — after that, the rest of `WEAPON_ORDER` compiles one weapon kind per idle slice (1.6 s
+gaps), stopping on user input (pointerdown/keydown capture), on a match start, or when done. Never audio.
+Best-effort: a kind that fails to warm stays cold and warms at match start. ON BOTH DEVICES: on potato/low the
+batches are the same but each compile is cheaper; the setting is opt-out and the first (equipped-weapon) warm
+unchanged, so a cheap Android pays the same schedule it already paid.
+
+**Touch editor (styles/ui.css + menus.js).** The edit stage now spans the whole viewport (100vw × the area
+between header and prompts) in BOTH orientations — the same area the live controls occupy, so where you drag
+is where you play. The settings panel sits above it (z-index 2) and stays fully interactive; drags stay
+clamped to 4 %–96 %, buttons keep `pointer-events: auto`, the size slider (60 %–180 %) writes straight through
+to the live layer. Nothing can end up unreachable or under the panel edge.
+
+**PC lockout (main.js `isTouch`).** A device with a fine pointer (`(pointer: fine)`) is a PC: `isTouch` is
+false, the `TouchControls` layer is NEVER built, so no touch input channel exists there at all — and the
+touch-only auto-aim (`lastDevice === 'touch'` gate) is unreachable with it. The menus hide the Touch settings
+tab on a PC (`api.isTouch()`); `?touch` still forces the layer on for desktop dev testing, `?no-touch` off.
+
+**Touch aim assist (player.js).** Strength 0.65 → 0.8 (stronger ease for thumb precision). Still LOS-verified,
+off by default, still releases the moment the target breaks sight — no new lock semantics.
+
+**Checks.** `npm run check` ok; full suite **157 assertions / 16 suites, 0 failed** (144 + 13 new in
+`test/load-watchdog-touch.test.mjs`); net-factory tests untouched.
+**NOT verified on hardware (no GPU/device in the container, E-007):** the actual look of the loading-first
+gate, the watchdog cue during real hitches, and editor ergonomics on a phone need the user's hands-on check.
+The menu hitches (612/672/624 ms) remain a separate open profiling item.
+
 ### E-011 addendum: missing `#version 300 es` in the strictness gate + setup-error session memo (2026-10-06, branch `fix/selftest-version-header`)
 
 **Root cause (user-verified logs, Firefox/GTX 980 + Android).** The `_assertProgram()` strictness gate ADDED by the

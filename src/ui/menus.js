@@ -2323,7 +2323,9 @@ export class Menus {
     const rowsEl = h('div', { class: 'iw-rows' });
     const controls = new Map();
     const pill = h('span', { class: 'iw-tabs__hl' });
-    const tabBtns = SETTINGS_TABS.map((t, i) => {
+    // a PC (no touch layer built, main.js isTouch) has no Touch tab: its settings rows cannot do anything there
+    const TABS = (this._touchActive ? SETTINGS_TABS : SETTINGS_TABS.filter((t) => t.id !== 'touch'));
+    const tabBtns = TABS.map((t, i) => {
       const b = h('button', { class: 'iw-tab' }, h('i', { html: GLYPHS[t.icon] }), h('span', null, t.label));
       this._bind(b, { id: 'tab-' + t.id, type: 'tab', accept: () => selectTab(i, true), adjust: (d) => { if (selectTab(i + d, true)) this._setFocus(tabBtns[tabIdx]); } });
       return b;
@@ -2337,7 +2339,8 @@ export class Menus {
     const pvHelp = h('p', { class: 'iw-prev__help' });
     const card = h('aside', { class: 'iw-prev iw-in iw-in--right' }, h('div', { class: 'iw-prev__head' }, pvLabel, pvVal), pvStage, pvHelp);
     const P = { key: null, cur: null };
-    const rowDef = (key) => { for (const t of SETTINGS_TABS) { const r = t.rows.find((x) => x.key === key); if (r) return r; } return null; };
+    const rowDef = (key) => { for (const t of SETTINGS_TABS) { const r = t.rows.find((x) => x.key === key); if (r) return r; } return null; };   // full table: previews stay correct even on a PC (touch rows hidden)
+    this._touchActive = this._touchActive || !!safeCall(() => this.api.isTouch && this.api.isTouch());
     const optLabel = (r, v) => {
       if (r.key === 'difficulty') return (this._diffs()[v] || {}).name || v;
       if (r.key === 'matchLength') return durLabel(v);
@@ -2369,7 +2372,7 @@ export class Menus {
       rowsEl.innerHTML = '';
       controls.clear();
       const s = this._settings();
-      const tab = SETTINGS_TABS[tabIdx];
+      const tab = TABS[tabIdx];
       tab.rows.forEach((r, i) => {
         let ctrl;
         if (r.type === 'link') ctrl = { el: h('span', { class: 'iw-row__link' }, 'VIEW', h('i', { html: GLYPHS.next })), accept: () => { this._sfx('ui_click'); this._go('howto'); } };
@@ -2405,7 +2408,7 @@ export class Menus {
       if (instant) { void pill.offsetWidth; pill.classList.remove('is-instant'); } // eslint-disable-line no-void
     };
     const selectTab = (i, sound) => {
-      if (i < 0 || i >= SETTINGS_TABS.length) { if (sound) { this._sfx('ui_error', 0.15); } return false; }
+      if (i < 0 || i >= TABS.length) { if (sound) { this._sfx('ui_error', 0.15); } return false; }
       if (i === tabIdx && rowsEl.childElementCount) return false;
       const dirSign = i >= tabIdx ? 1 : -1;
       tabIdx = i; this._settingsTab = i;
@@ -2418,7 +2421,7 @@ export class Menus {
       buildRows(dirSign);
       return true;
     };
-    tabsEl.style.setProperty('--n', SETTINGS_TABS.length);
+    tabsEl.style.setProperty('--n', TABS.length);
     tabBtns.forEach((b, k) => b.classList.toggle('is-sel', k === tabIdx));
     tabsEl.style.setProperty('--idx', tabIdx);
     buildRows(1);
@@ -2457,7 +2460,7 @@ export class Menus {
       afterMount: () => movePill(true),
       onFocus: (f) => {
         if (f._key) showPreview(f._key);
-        else if (f.dataset.nav === 'tab') { const t = SETTINGS_TABS[tabBtns.indexOf(f)]; if (t) showPreview('_tab_' + t.id, { label: t.label, help: TAB_BLURB[t.id], tab: t }); }
+        else if (f.dataset.nav === 'tab') { const t = TABS[tabBtns.indexOf(f)]; if (t) showPreview('_tab_' + t.id, { label: t.label, help: TAB_BLURB[t.id], tab: t }); }
         else if (f.dataset.id === 'reset') showPreview('_reset', { label: 'Reset', help: 'Restore every setting to its original value.' });
       },
       onSetting: (key, value) => {

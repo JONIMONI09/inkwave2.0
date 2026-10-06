@@ -5,6 +5,34 @@ keep the format below. Update alongside `session.md`.
 
 ---
 
+## E-012 · Match-start presentation could hide the loading gate behind a 600 ms blank fade; spikes had no visible cue
+
+**Status:** resolved (branch `feat/load-camera-watchdog-touch`, 2026-10-06) — code-verified, device look pending user check.
+
+### What happens (user report)
+1. Pressing PLAY first gave a blank fade and only later the loading screen (a `gate.slow` timer showed it after
+   600 ms) — on a slow device the first 600 ms of a stage build were hidden behind nothing.
+2. Mid-match spikes (three ≥50 ms frames) had no visible "still here" cue; the user asked for a watchdog that
+   briefly shows a loading cue during spikes and otherwise stays out of the way.
+
+### Root cause
+The match-start gate was designed "loading screen only when waiting is long enough" (a 600 ms measured-delay
+heuristic). That reads as a hang on a slow device. And the corner busy spinner existed but was only wired to
+the match-start flow (`showBusy` at >600 ms), not to live-play hitches.
+
+### Fix
+- `startMatch` shows the themed loading screen immediately; `_gateDone` closes it exactly at the GO banner so
+  the intro fly-over starts clean — the two never overlap (the screen leaves BEFORE the intro's first frame).
+- New `_hitchWatchdog` in the frame loop: three ≥50 ms frames in a row during a live round → corner spinner
+  "Catching up…" (NOT a full overlay — that would cover the HUD and read as a load). Gated on
+  `!m.paused && !menus.current` so it can never overlap menus/pause/loading; hides on the first good frame.
+- Prevention note: presentation gates that guess at "long enough" hide real waits — prefer showing the honest
+  screen immediately and closing it at the authoritative edge (here: the 'playing' state).
+
+**Device look (fade timing, spinner legibility) not verifiable in the container (E-007) — pending user check.**
+
+---
+
 ## E-011 · GPU self-test shaders were broken — every desktop GPU reported FAIL FAIL FAIL FAIL and got forced into the legacy tier
 
 **Status:** resolved (branch `fix/gpu-selftest-shaders-android`) — root cause CONFIRMED (driver shader logs + CI smoke output).
