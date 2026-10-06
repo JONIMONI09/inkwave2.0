@@ -15,3 +15,13 @@ songs/**/*.opus
 songs/**/*.wav
 songs/**/*.flac
 songs/manifest.json
+
+# --- AI agent working files: keep local, never commit ---
+# These are development tooling, not part of the game.
+# Untrack existing repo copies once with:
+#   git rm -r --cached .claude CLAUDE.md AGENTS.md session.md error.md
+.claude/
+CLAUDE.md
+AGENTS.md
+session.md
+error.md
