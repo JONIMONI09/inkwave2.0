@@ -56,7 +56,7 @@ export class PlayerController {
     // released the moment the target breaks sight, swims, dies or leaves the cone. autoFireOnAim adds the
     // trigger while such a target is held and in range (never through walls — the cone check runs a physics
     // LOS ray — and never while the map/special UI is up, which already force it.fire = false below).
-    const touchAssist = !usingPad && inp.lastDevice === 'touch' && s.touchAutoAim ? 0.65 : 0;
+    const touchAssist = !usingPad && inp.lastDevice === 'touch' && s.touchAutoAim ? 0.8 : 0;
     const as = this._assistTarget(usingPad ? (s.aimAssist ?? 1) : touchAssist || (s.aimAssistMouse ? 0.5 : 0));
     // ---- look
     const inv = s.invertY ? -1 : 1;

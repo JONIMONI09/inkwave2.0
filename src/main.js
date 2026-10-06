@@ -134,7 +134,11 @@ class Game {
     this.R.setScene(scene, camera);
     this.input = G.input = new Input(this.R.renderer.domElement);
     // touch devices (phones/tablets): on-screen controls instead of pointer lock + keyboard
-    this.isTouch = isTouchDevice() && !params.has('no-touch');
+    // A device with a fine pointer (mouse/trackpad) is a PC: the touch layer is never built there, so touch
+    // input cannot exist on PC at all (and the touch-only auto-aim with it). `?no-touch` still forces it off,
+    // `?touch` forces it on for touch emulation on desktop dev machines.
+    const finePointer = (typeof matchMedia === 'function') && matchMedia('(pointer: fine)').matches;
+    this.isTouch = (params.has('touch') || (isTouchDevice() && !params.has('no-touch') && !finePointer));
     this.menus?.setInputHint?.(this.isTouch ? 'touch' : 'keys');   // input-aware loading tips (T1-3)
     this.input.touchOnly = this.isTouch;
     if (this.isTouch) this.touch = new TouchControls(this.input, { onPause: () => this._touchPause() }).bindOrientation();
@@ -585,6 +589,7 @@ class Game {
       getTouchLayout: () => loadLayout(),
       setTouchLayout: (rec) => { const norm = saveLayout(rec); self.touch?.applyLayout(norm); return norm; },
       touchOrientation: () => activeOrientation(),
+      isTouch: () => !!self.isTouch,   // menus hide the Touch tab on a PC (no touch layer exists there)
       rematch: () => self.startMatch(self.lastMatchOpts || {}),
       toMainMenu: () => self.quitToMenu(),
       onScreenChange: (s) => self._onScreen(s),
@@ -936,16 +941,18 @@ class Game {
     G.audio?.init?.();
     G.audio?.duck?.(1, 0.01);   // a new stage picked from the practice pause menu starts un-ducked
     this.input.requestLock();
-    // Match-start presentation: the camera-fade flow (commit 19dd9bd) is the default again — the screen fades out,
-    // the stage builds behind the fade, and the intro fly-over + GO banner play. Only real waiting gets an overlay:
-    // after 600 ms of measured preparation the themed loading screen steps in (no staged percentages, honest labels);
-    // shorter builds never show one, and a late-arriving < 250 ms busy blip gets the small corner spinner instead.
+    // Match-start presentation: PLAY first shows the themed loading screen, THEN the intro fly-over plays.
+    // The screen goes up immediately (no blank fade, no staged percentages — honest labels), the stage builds
+    // behind it, and _gateDone hands it away exactly at the GO banner so the camera sweep starts clean — the
+    // two never overlap because the loading screen leaves BEFORE the intro's first frame renders. A build
+    // faster than the first paint still skips the screen and gets the corner spinner instead.
     const gate = (this._matchGate = { t0: performance.now(), map: opts.mapId, mode: opts.mode, done: false });
     // never trap the player if 'playing' never fires — but while a slow device is genuinely still building, keep the
     // honest loading screen: a forced gate mid-build shows an empty world, which reads as "the map won't load"
     const safety = () => { if (this._building) gate.safety = setTimeout(safety, 3000); else this._gateDone(true); };
     gate.safety = setTimeout(safety, 22000);
-    gate.slow = setTimeout(() => { if (!gate.done) { this.menus?.show('loading'); this.menus?.setLoading(0.1, 'Raising the arena…'); } }, 600);
+    this.menus?.show('loading');
+    this.menus?.setLoading(0.1, 'Raising the arena…');
     await this._fade(1, 350);
     G.music?.stop?.(0.3); this._musicTrack = null;
     // start buffering this round's match song and the final-minute song while the world loads
@@ -1021,7 +1028,6 @@ class Game {
     if (!gate || gate.done) return;
     gate.done = true;
     clearTimeout(gate.safety);
-    clearTimeout(gate.slow);
     this.menus?.hideBusy();
     const finish = () => {
       if (this._matchGate !== gate) return;
@@ -1143,6 +1149,40 @@ class Game {
       Promise.resolve(c.warmAll?.()).catch(() => {}).then(() => { G.scene.remove(c.root); c.dispose?.(); }, () => { G.scene.remove(c.root); c.dispose?.(); });
     } catch (e) { console.warn('[inkwave] idle prewarm', e); }
     this.showcase?._warmup?.();   // the showcase/locker/portrait shaders, same as after boot
+    this._prewarmWeaponBatches(); // then the REST of the kit list, idle-sized, so a loadout switch never hitches
+  }
+
+  // Extend the pre-warm past the equipped weapon: after the player's own kit is hot (above), compile one weapon
+  // kind per idle slice (WEAPON_ORDER) with fresh programs per kind. Stops the moment the player does anything
+  // (navigation/input would turn a warm-up into a hitch), when a match starts, or when the list is done —
+  // and never touches audio (no AudioContext before a user gesture, ever).
+  _prewarmWeaponBatches() {
+    if (!this.settings?.prewarm) return;
+    const queue = WEAPON_ORDER.filter((id) => id !== (this.profile.weapon || 'shooter'));
+    let i = 0, running = false;
+    const stop = () => { removeEventListener('pointerdown', stop, true); removeEventListener('keydown', stop, true); running = false; };
+    addEventListener('pointerdown', stop, true);
+    addEventListener('keydown', stop, true);
+    const step = () => {
+      if (!running || i >= queue.length) return stop();
+      if (G.mode !== 'menu') return stop();
+      const id = queue[i++];
+      try {
+        const c = new this.CharacterClass({
+          color: G.teamColors[0].clone(), weapon: id, style: { ...(this.profile.style || {}) },
+          name: 'prewarm', isLocal: false,
+        });
+        c.root.visible = false;
+        G.scene.add(c.root);
+        Promise.resolve(c.warmAll?.()).catch(() => {}).then(
+          () => { G.scene.remove(c.root); c.dispose?.(); },
+          () => { G.scene.remove(c.root); c.dispose?.(); });
+      } catch { /* a weapon that fails to build warm simply stays cold; the match warms on start */ }
+      // idle slice: cap the batch to one kid per frame-sized gap so the menu keeps animating smoothly
+      setTimeout(step, 1600);
+    };
+    running = true;
+    setTimeout(step, 2500);   // let the equipped-weapon warm above finish first
   }
 
   async _warmCharacters(m) {
@@ -1403,11 +1443,30 @@ class Game {
       this._slowN = (this._slowN || 0) + 1;
       if (this._slowN === 3) Log.occasional('perf', 8000, `slow frame ${(dt * 1000) | 0}ms`, `mode ${G.mode}`, this.match ? `state ${this.match.state}` : '');
     } else this._slowN = 0;
+    this._hitchWatchdog(dt);
     this._dynRes(dt);
     const rawDt = dt;   // perf wants the real frame time; the sim clamps below
     dt = Math.min(dt, 1 / 24);
     this._frame(dt);
     Perf.frame(rawDt);   // hitch baseline: ring percentiles + long tasks + spot timings
+  }
+
+  // Hitch watchdog: three ≥50 ms frames in a row during a live round get a visible "still here" cue — the corner
+  // busy spinner (NOT the full loading screen: a mid-match overlay would read as a load and cover the HUD). It
+  // never overlaps other screens: it only shows when no menu/loading screen is up, and it hides itself the moment
+  // frames recover (one good frame) or the round ends. The corner spinner has its own 250 ms fade-in delay, so a
+  // single blip never flashes it on.
+  _hitchWatchdog(dt) {
+    const m = this.match;
+    const live = !!(m && !m.attract && !m.paused && !this.menus?.current && (m.state === 'playing' || m.state === 'intro'));
+    if (!live) { if (this._hitchBusy) { this._hitchBusy = false; this.menus?.hideBusy(); } return; }
+    if (dt > 1 / 20) {
+      this._hitchN = (this._hitchN || 0) + 1;
+      if (this._hitchN >= 3 && !this._hitchBusy) { this._hitchBusy = true; this.menus?.showBusy('Catching up…'); }
+    } else {
+      this._hitchN = 0;
+      if (this._hitchBusy) { this._hitchBusy = false; this.menus?.hideBusy(); }
+    }
   }
 
   // Display refresh estimate: 10th percentile of raw rAF intervals (rAF fires every vsync while frames keep up, and

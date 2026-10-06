@@ -2853,8 +2853,9 @@ circle.iw-ico-cut { fill: var(--cut, #fff); }
    ================================================================================================== */
 .iw-touchedit .iw-tle {
   position: absolute; left: calc(var(--u) * 3.6); top: calc(var(--u) * 10.4);
-  width: min(38vw, calc(var(--u) * 34)); display: flex; flex-direction: column;
+  width: min(26vw, calc(var(--u) * 26)); display: flex; flex-direction: column;
   gap: calc(var(--u) * 1.2); padding: calc(var(--u) * 1.6);
+  z-index: 2;   /* panel above the stage: the stage may reach under it, the panel stays clickable */
 }
 .iw-tle__head { display: flex; align-items: center; gap: calc(var(--u) * .9); }
 .iw-tle__head i { width: calc(var(--u) * 3); height: calc(var(--u) * 3); color: var(--a); }
@@ -2873,17 +2874,21 @@ circle.iw-ico-cut { fill: var(--cut, #fff); }
 .iw-tle__foot { display: flex; gap: calc(var(--u) * .8); margin-top: calc(var(--u) * .4); }
 .iw-tle__foot > * { flex: 1; }
 
-.iw-tle__stage { position: absolute; right: calc(var(--u) * 3.6); top: calc(var(--u) * 10.4);
-  bottom: calc(var(--u) * 8); aspect-ratio: 16 / 9; max-width: 52vw; margin-left: auto;
-  border-radius: calc(var(--u) * 2.4); touch-action: none; cursor: grab;
+/* Near-fullscreen edit stage: the card mirrors the WHOLE viewport the buttons really live in, so where you
+   drag is where you play. It sits under the settings panel (which stays fully interactive) and under the
+   header/prompts; every button keeps pointer-events and stays clamped inside, so nothing is ever unreachable. */
+.iw-tle__stage { position: absolute; left: 0; top: calc(var(--u) * 6.4); width: 100vw; height: calc(100vh - var(--u) * 12.4);
+  aspect-ratio: auto; max-width: none; margin: 0; border-radius: 0;
+  touch-action: none; cursor: grab;
   background:
     radial-gradient(120% 90% at 50% 0%, rgba(var(--a-rgb), .12), transparent 70%),
     linear-gradient(180deg, #10131f, #0a0d16);
-  border: 2px solid rgba(255, 255, 255, .14);
-  box-shadow: 0 calc(var(--u) * 1.6) calc(var(--u) * 4) rgba(0, 0, 0, .45), inset 0 0 0 calc(var(--u) * .2) rgba(0, 0, 0, .5);
+  border: 0; border-bottom: 2px solid rgba(255, 255, 255, .14);
+  box-shadow: none;
 }
-/* Portrait edits a portrait card: same fractions, phone proportions. */
-.iw-tle__stage.is-portrait { aspect-ratio: 9 / 16; right: auto; left: 50%; translate: -50% 0; max-width: min(34vw, calc(var(--u) * 30)); }
+/* Portrait edits a portrait card: same fractions, phone proportions — but the stage still spans the screen
+   (the live layer covers the whole viewport in both orientations, so the editor must too). */
+.iw-tle__stage.is-portrait { aspect-ratio: auto; }
 /* the card symbol: which device you are editing, with the game's own squid for company */
 .iw-tle__card { position: absolute; left: 50%; top: calc(var(--u) * 1.2); translate: -50% 0;
   display: flex; align-items: center; gap: calc(var(--u) * .6); pointer-events: none; }
