@@ -5,6 +5,32 @@ keep the format below. Update alongside `session.md`.
 
 ---
 
+## E-010 · Boot crash: "can't access property 'getContext', r is null" during „Building the plaza…"
+
+**Status:** resolved (PR `fix/gpu-selftest-null-renderer`, 2026-10-06) — root cause CONFIRMED in code, not a guess.
+
+### What happens
+On every boot (reported from the hosted preview; no special hardware needed) the game dies during the stage build
+with `Something went wrong while loading: can't access property "getContext", r is null`.
+
+### Root cause (confirmed)
+`boot()` constructed `GpuSelfTest(G.renderer)` at the TOP of boot — but `G.renderer` is only assigned a few lines
+later (`G.renderer = this.R.renderer`). The self-test therefore held a null renderer, and the first tier test
+(`_resolveGpuTier()` → `gpuTest.run()` during the texlib/stage build) called `null.getContext()`. Regression from
+the GPU self-test feature (E-009 work, PR #8); CI never caught it because the smoke path never hits the tier-test
+branch on a fresh profile.
+
+### Fix
+1. `src/main.js`: build the self-test (and run `?gpudiag`) directly AFTER `G.renderer` is set, with a comment
+   explaining the ordering constraint.
+2. `src/core/gpu-selftest.js`: `run()` returns `null` when there is no renderer — every caller already null-checks,
+   so a future ordering bug degrades to "no verdict / keep current behaviour" instead of crashing boot.
+
+**Prevention note:** the smoke job is now `continue-on-error` (warns, deploy continues) — which also means CI can
+no longer be relied on to catch boot regressions; the unit suites and local `npm run smoke` carry that weight.
+
+---
+
 ## E-009 · Adreno/ANGLE: maps render dark without any error (silent texlib failure) + no touch auto-aim
 
 **Status:** fix implemented, device verification pending (2026-10-06)

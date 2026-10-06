@@ -25,12 +25,14 @@ export const Log = {
   error(tag, ...args) { emit('error', tag, args); },
   debug(tag, ...args) { if (VERBOSE) emit('info', tag, args); },
 
-  /** Rate-limited info line: at most one per `minMs` per tag (the first call always logs). */
+  /** Rate-limited info line: at most one per `minMs` per tag (the first call always logs).
+   *  Lazy args: a function argument is only called when the line actually logs — so a caller can
+   *  pass an expensive summary that must not be built on suppressed (rate-limited) calls. */
   occasional(tag, minMs = 5000, ...args) {
     const t = performance.now();
     if (t - (_last.get(tag) ?? -Infinity) < minMs) return false;
     _last.set(tag, t);
-    emit('info', tag, args);
+    emit('info', tag, args.map((a) => (typeof a === 'function' ? a() : a)));
     return true;
   },
 
