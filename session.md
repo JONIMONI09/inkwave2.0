@@ -5,6 +5,36 @@ progresses; keep the completed list factual and the remaining list actionable.
 
 Last updated: 2026-10-06
 
+### Boot-crash hotfix, CI smoke → warn-not-block, perf port analysis (2026-10-06, branches `fix/gpu-selftest-null-renderer` + `perf/hitch-first-1`)
+
+**E-010 boot crash fixed.** `boot()` built `GpuSelfTest(G.renderer)` before `G.renderer` existed → `null.getContext()`
+crashed every boot during „Building the plaza…". Fix: self-test construction (and `?gpudiag`) moved directly after
+`G.renderer = this.R.renderer`; `GpuSelfTest.run()` additionally returns null without a renderer. PR #9 — merge first.
+
+**CI: smoke no longer blocks Pages.** The smoke job is `continue-on-error: true` with a `::warning::` step; a failed
+boot test warns and `deploy-pages` still runs. Trade-off accepted: CI can no longer prove boot health — the unit
+suites + local `npm run smoke` carry that.
+
+**Perf port list from the People-11 addendum — verified against our tree (one factor at a time, measure first):**
+- **#6 instrumentation self-infection — CONFIRMED and fixed.** `Perf.frame()` built `summary()` (Array.from over a
+  600-frame ring + sort + all spots stringified) as an EAGER argument on every hitch frame ≥45 ms, even when the
+  rate limiter suppressed the line. Fix: `Log.occasional` accepts lazy (function) args; perf.js passes a thunk;
+  summary is built only when the line actually logs. New suite `test/perf-summary.test.mjs` (5 tests) pins the
+  thunk (source assertion) and the suppression behaviour (behavioural).
+- **#4 ally name tags — already largely handled in our diverged HUD.** `_updMarkers` is dirty-checked via a rounded
+  position key and writes transform-only styles; the People-11 "re-rasterize every frame" pattern is not present.
+  No port needed; revisit only with DevTools reflow evidence on a device.
+- **#1 shader keep-alive / precompile** — partially ours already (`compileAsync` warm-up, prewarm); the
+  mid-match first-use precompile (screen FX, bombs, storm clouds) is still open.
+- **#2 one updateMatrixWorld pass, #3 HUD layout thrash reads, #5 bot paint-grid cache @10 Hz, #7 pass fusion,
+  #8 single-output texlib bakes, #9 menu-idle bot pre-roll** — not yet ported; each needs a before/after
+  `__inkwave.perf` comparison on a device we do not have in this container.
+- **#10 workers, #11 timestamp stepping** — explicitly later/high-risk, unchanged.
+
+**Checks run.** `npm run check` → syntax ok; `npm test` → 121 assertions green across **13 suites** (new:
+perf-summary). NOT measured: actual hitch percentiles before/after (no GPU in this container, no device) —
+the #6 fix is behaviourally proven by test, its real-world p95 effect is unmeasured.
+
 ### GPU compatibility self-test, dark-map fix system, and touch auto-aim (2026-10-06, branch `fix/hud-timing-spawn-protection`)
 **User reports.** (a) On the Snapdragon tablet maps render dark (chrome://gpu evidence in the brief: Adreno 750,
 ANGLE GLES, `srgbBlendingBroken` ENABLED, untrustworthy renderability probes, broken MSAA readPixels);

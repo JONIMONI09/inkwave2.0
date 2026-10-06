@@ -56,7 +56,10 @@ export const Perf = {
     if (ms >= MIN_MS && ms < 1000) {   // ≥1 s gaps are tab-switch returns, not hitches — keep them out of the ring
       S.buf[S.idx] = ms; S.idx = (S.idx + 1) % RING;
       if (S.filled < RING) S.filled++;
-      if (ms >= REPORT_MS) Log.occasional('perf', QUIET_MS, `hitch ${ms | 0}ms · mode ${G.mode}`, this.summary());
+      if (ms >= REPORT_MS) Log.occasional('perf', QUIET_MS, `hitch ${ms | 0}ms · mode ${G.mode}`, () => this.summary());
+      // summary is a THUNK: Log.occasional only calls it when the line passes the rate limiter. Building it
+      // eagerly sorted 600 samples + stringified every spot on every hitch frame ≥45 ms — instrumentation
+      // cost that spiked exactly while the game was already hitching (perf instrumentation self-infection).
     }
     // sampled renderer.info snapshot (calls/triangles of the last rendered frame)
     if (S.n % SUM_EVERY === 0) {
