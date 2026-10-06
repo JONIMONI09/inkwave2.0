@@ -8,6 +8,31 @@ Last updated: 2026-10-05
 ### UI bug fixes: Esc loop in pushed sub-screens and a stuck judge hand-off (2026-10-05, branch `fix/hud-timing-spawn-protection`)
 Both bugs were user-reported with screenshots. Base still `a3309cf`; two files changed plus one new test suite.
 
+### CI smoke made fps-independent (2026-10-05, branch `fix/hud-timing-spawn-protection`)
+**PR #6 check triage (confirmed).** `checks` (syntax + maps) passes; the `smoke` job fails — and has failed on
+**every** CI run in this repo's history, on `main` too. Signature: `until timeout …state==="playing"`, then
+`smoke -> {"state":"intro","boot":72000–126000,"fps":0–1}` → SMOKE FAIL.
+
+**Root cause — confirmed by runner logs + source + a local headless probe.** The smoke waited for wall-clock rAF:
+`waitForFunction` polls the live page while the frame loop runs. On CI's SwiftShader software WebGL the page renders
+at ~1 fps, and `_loop()` clamps sim time to 1/24 s per rendered frame (`dt = Math.min(dt, 1/24)`) — so the 4.2 s
+intro needs ~100 *rendered* frames, i.e. ~100 s after a 72–126 s boot. `UNTIL_MS` 300 s was simply spent before the
+sim could get there; the game logic itself is fine (the local probe shows state `intro`, `stateT` creeping up
+slowly, no page errors on the branch's logic paths).
+
+**Fix (test infrastructure only, no game code).** The smoke now drives the sim with the game's own deterministic
+stepping — `__inkwave.debug.freeze()` stops the rAF loop, then `debug.step(100)` walks `_frame(1/60)` until
+`state === 'playing'` (300-step guard), then `step(8000)` plays 8 s — via new `tools/smoke-steps.json`
+(play.mjs accepts a file path, which also removes the old inline-JSON quoting maze). Assertions unchanged: reaches
+`playing`, plays 8 s, no console/page errors, plus a new explicit `"state":"playing"` check with a diagnosis on
+failure. Locally verified: script parses, steps JSON parses, and in this WebGL-less container the failure path
+triggers exactly as designed (`[error] WebGL context could not be created` → SMOKE FAIL, exit 1). The pass path is
+proven by the CI run this push triggers — SwiftShader exists on `ubuntu-latest`, not here.
+
+**Checks run (exact results).** `sh -n tools/smoke.sh` → ok; steps JSON → valid; local `npm run smoke` (SMOKE_PORT
+8491, no WebGL available) → failed correctly with the expected error signature; `npm test` → 92/92 (unchanged).
+
+---
 **Esc loop (confirmed, E-005 — a regression from the profiles/touch-editor work).** Settings → Touch → Touch
 layout editor, then Esc: the editor's `onBack` (and the profiles screen's) called `_go('settings', {back:true})`.
 `_go` always *pushes*, so the stack became `[main, settings, touchedit, settings]`; the next Esc popped
