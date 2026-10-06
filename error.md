@@ -39,12 +39,29 @@ Three.js floods the console with ShaderError messages, which fails the smoke tes
 - `gpu-caps.js` probes renderability via a real framebuffer attachment + `checkFramebufferStatus`, and WebGL2
   core 16F filterability is used instead of the non-standard pname.
 
+### Regression addendum (2026-10-06, branch `fix/selftest-version-header`): the fix's own strictness gate compiled WITHOUT a version header
+
+**What broke.** After the E-011 fix shipped, the self-test errored again on Firefox/GTX 980 AND Android — this
+time with `ERROR: 0:1: 'in' : storage qualifier supported in GLSL ES 3.00 and above only`. `_assertProgram()`
+feeds the probe sources DIRECTLY to `gl.shaderSource()`, bypassing three.js's material machinery — so the
+`#version 300 es` header three injects for the RawShaderMaterial(GLSL3) path was missing, the driver parsed
+GLSL ES 1.00, and the ES 3.00 probe sources failed to compile. The gate manufactured the very failure it was
+built to separate from a capability FAIL. (The `_mat()` RawShaderMaterial path is unaffected — three.js adds
+the header there.)
+
+**Fix.** `_assertProgram()` prefixes BOTH stages with `#version 300 es\n` (only when the source does not carry
+its own directive); the probe templates are unchanged. A SETUP-ERROR verdict is additionally memoised per GPU
+signature for the session (`GpuSelfTest._setupMemo`, in memory only — never persisted), so boot, `?gpudiag` and
+the boot-time tier resolution share one result instead of re-running a failing suite up to 3×; the Settings
+gpuCheck forces a fresh run (`runFresh()`). `verdictToTier` semantics are untouched (setup error → tier stays).
+
 ### Tests
-`test/selftest-and-android.test.mjs` (13): tier handling of ERROR verdicts, shader-source hygiene (no injected
+`test/selftest-and-android.test.mjs` (16): tier handling of ERROR verdicts, shader-source hygiene (no injected
 output, no source-replaced uniform, explicit locations), ≥4 `_assertProgram` calls, boot order, signature cache,
-no `gl.getInternalformatParameter` calls. `test/compat.test.mjs` B7 stubs updated to the FBO-completeness model.
-**Device re-test pending:** Firefox/GTX 980 must now report PASS on all four (expected); Snapdragon results are
-still unknown until the corrected tests run there — record actuals, do not force the outcome.
+no `gl.getInternalformatParameter` calls, PLUS the regression addendum tests (version-header prefix on both
+stages, setup-error memo + forced fresh run, distinct boot progress labels).
+**Device re-test still pending** — actual verdicts on Firefox/GTX 980 + Android must be recorded from a real
+run; nothing here assumes PASS.
 
 ---
 

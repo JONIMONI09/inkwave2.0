@@ -5,6 +5,27 @@ progresses; keep the completed list factual and the remaining list actionable.
 
 Last updated: 2026-10-06
 
+### E-011 addendum: missing `#version 300 es` in the strictness gate + setup-error session memo (2026-10-06, branch `fix/selftest-version-header`)
+
+**Root cause (user-verified logs, Firefox/GTX 980 + Android).** The `_assertProgram()` strictness gate ADDED by the
+E-011 fix compiled the probe sources raw through `gl.shaderSource()` — without the `#version 300 es` header
+three.js injects on the RawShaderMaterial(GLSL3) path. The driver parsed GLSL ES 1.00 and every `in` line errored
+("storage qualifier supported in GLSL ES 3.00 and above only"). The gate manufactured the failure it was built to
+catch; `_mat()` (three.js adds the header) was always fine.
+
+**Fix (minimal, probe templates untouched).** `_assertProgram()` prefixes BOTH stages with `#version 300 es` only
+when absent. SETUP-ERROR verdicts are memoised per GPU signature FOR THE SESSION (`_setupMemo`, in memory only,
+never persisted) so boot, `?gpudiag` and boot-time tier resolution share one result instead of re-running a
+failing suite up to 3×; the Settings gpuCheck forces a fresh run (`runFresh()`). `verdictToTier` semantics kept
+(setup error → tier stays). Boot progress labels are now distinct ("Compiling shaders…" / "Finalizing…") —
+Log.steps suppressed same-label repeats, so "Ready!" had been reporting the whole compileAsync span as one number.
+
+**Checks.** `npm run check` syntax ok; full suite 144 assertions / 16 suites, 0 failed (141 + 3 new regression
+tests in `test/selftest-and-android.test.mjs`); net-factory tests untouched.
+**NOT verified on real GPU:** the container has none (E-007). Actual verdicts on Firefox/GTX 980 + Android are
+pending the user's re-test (Settings → Optimize → gpuCheck, or `?gpudiag`) — record what the driver says, do not
+assume PASS. Menu hitches (612/672/624 ms) are a separate open item, not attributed by this change.
+
 ### CI repo-policy fixes + smoke eval-timeout (2026-10-06, same branch `fix/gpu-selftest-shaders-android`)
 
 **Actions "Startup failure"** (`actions/checkout@v4 … not allowed … all actions must be owned by JONIMONI09`):
