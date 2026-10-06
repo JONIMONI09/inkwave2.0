@@ -125,7 +125,9 @@ export class Renderer {
     r.setSize(w, h);
     // effective MSAA sample count (also read by the showcase for its private target)
     this.samples = this.appleGPU ? 0 : q.msaa || 0;
-    if (this.samples && this.caps.maxSamples && this.samples > this.caps.maxSamples) this.samples = this.caps.maxSamples;
+    // clamp to what the driver accepts — and a falsy maxSamples (0, or a driver that reports nothing
+    // usable) must clamp to 0 too, not skip the clamp and request MSAA the context cannot provide
+    if (this.samples && (!this.caps.maxSamples || this.samples > this.caps.maxSamples)) this.samples = this.caps.maxSamples || 0;
     // presets with bloom off never read HDR values back out of the target (grade/tonemap only), so
     // they can run an 8-bit target: half the fill bandwidth — the dominant cost on weak mobile GPUs.
     // Without a renderable half-float buffer (older Firefox/software GL) the HDR target is skipped entirely.

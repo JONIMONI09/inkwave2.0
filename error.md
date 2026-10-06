@@ -5,6 +5,81 @@ keep the format below. Update alongside `session.md`.
 
 ---
 
+## E-009 · Adreno/ANGLE: maps render dark without any error (silent texlib failure) + no touch auto-aim
+
+**Status:** fix implemented, device verification pending (2026-10-06)
+
+### What happens
+On a Snapdragon 8 Elite / Adreno 750 (Chrome 156, Android 15, ANGLE GLES backend) maps render dark/wrong-coloured
+while FPS is fine. `chrome://gpu` shows: `srgbBlendingBroken` ENABLED, `unsizedSRGBReadPixelsDoesntTransform`
+ENABLED, force-enabled float colour buffers (so `getInternalformatParameter` renderability probes CANNOT be
+trusted), MSAA capped at 4, broken readPixels with EXT_multisampled_render_to_texture (crbug 890002).
+
+### Root cause — plausible, isolated by test design (not yet reproduced on the device)
+The texlib writes albedo into an SRGB8_ALPHA8 array attachment (MRT). If any sRGB attachment/blending stage of
+that path misbehaves on this driver, the failure is SILENT: nothing throws, the map just renders wrong — and
+`main.js` only fell back when texlib CREATION threw. Nothing in `gpu-caps.js` ever rendered-and-read-back, so
+nothing could notice.
+
+### Solution path (src/core/gpu-selftest.js new; texlib.js, main.js, renderer.js, menus.js)
+Render-and-readback self-tests (the ONLY trustworthy source on these drivers), all readbacks on non-MSAA RGBA8:
+T1 texture-array sampling, T2 MRT write+readback, T3 sRGB attachment roundtrip (black readback = FAILURE),
+T4 sRGB blending (blend into SRGB8_ALPHA8 vs shader-encoded linear blend). Verdict → tier: full / linearAlbedo
+(albedo attachment linear — encode/decode cancel, identical output through a proven path) / legacy (procedural
+material path, USE_TEXLIB off). Decided once per session, cached in `settings.gpuTier`; Settings → Optimize gets
+a RUN button + a manual "Compatibility mode: Always" segment. Additionally: texlib validates framebuffer
+completeness before returning (throws into the existing fallback), and the MSAA clamp now handles falsy
+`maxSamples` (requested → 0, not unclamped).
+
+### Also shipped (same brief)
+Touch auto-aim + auto-fire (Settings → Touch, off by default, touch-only): LOS-verified cone target per frame via
+the existing `_assistTarget` physics ray, damped ease steering (no snap, no lock state), auto-fire holds the
+trigger only while such a target is in range — self-releasing by construction, cannot fire through walls, the
+strike/map UIs still clear all fire intents.
+
+### Verification
+`npm run check` → syntax ok; `npm test` → 116 passed, 0 failed (12 suites; new: gpu-selftest 14, touch-autoaim
+10). NOT verified on the affected device: the pass/fail behaviour on the Adreno itself. Next step for the user:
+run with `?gpudiag` once on the tablet and once on a PC, compare the `[inkwave:gpu]` console lines; or use
+Settings → Optimize → Graphics compatibility check on the tablet. If maps still render wrong, "Compatibility mode:
+Always" is the guaranteed-correct fallback.
+
+### Prevention
+On drivers with known-broken subfeatures, only a render+readback test is evidence. Extension/renderability
+probes are advisory on Android (Chromium force-enables formats). Any full-screen attachment format needs a
+self-test before the game depends on it.
+
+---
+
+## E-008 · CI smoke step timeout (8 min) exceeded after the stage-build precompile
+
+**Status:** resolved — budget raised, verification run pending (2026-10-06)
+
+### What happens
+After commit `c3c753b` moved the per-stage shader precompile (`renderer.compileAsync`) into `_buildWorldNow`, the
+smoke job's "Boot the game and autopilot a match" step was killed by its own `timeout-minutes: 8` — before reaching
+any game assertion: no `smoke ->` line, no `[error]`, just the step timeout.
+
+### Root cause — confirmed (job timings)
+The green baseline (`40aeb33`) ran the step in **6 min 6 s**. The precompile moves the same shader-compile work from
+the first rendered frames to the loading screen — but `compile()` walks *every* scene object, so on CI's SwiftShader
+(software GL, synchronous compiles via `?shadercheck`) that is serial CPU work of minutes, and the 8-minute step
+budget — set when the smoke compiled lazily during rendering — no longer covered boot + precompile + stepped play.
+
+### Solution path
+Test-infrastructure budget only: `timeout-minutes: 8 → 12` on the smoke step, with the budget reasoning as a
+comment. Assertions untouched; the game change itself is the wanted fix for the transition stutter and frozen
+loading screens.
+
+### Verification
+The CI run on the follow-up commit must pass the smoke job end-to-end; until then this entry stays "pending".
+
+### Prevention
+A step's timeout must cover its worst documented budget: boot alone is 74–126 s on SwiftShader (E-007) and a
+full-scene compile on software GL is minutes. When a change moves work INTO a measured step, re-check the budget.
+
+---
+
 ## E-007 · CI smoke job fails on every run: sim cannot reach `playing` at ~1 rendered fps
 
 **Status:** fix pushed, CI verification pending (2026-10-05)

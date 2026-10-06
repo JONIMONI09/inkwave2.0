@@ -180,6 +180,8 @@ const SETTINGS_TABS = [
     { key: '_howto', label: 'Controls reference', type: 'link', help: 'Every keyboard, mouse and controller binding in one place.' },
   ] },
   { id: 'touch', label: 'Touch', icon: 'gamepad', rows: [
+    { key: 'touchAutoAim', label: 'Auto-aim assist (touch)', type: 'toggle', help: 'Touch only: when the crosshair holds on a visible rival for a moment, your aim eases onto them — and with Auto-fire it shoots for you while it holds. Never fires through walls, never locks forever, disengages the instant the target breaks line of sight.' },
+    { key: 'autoFireOnAim', label: 'Auto-fire with auto-aim (touch)', type: 'toggle', help: 'Touch only, needs Auto-aim assist: while the assist has a target in range and line of sight, fire for you. You keep full control — the assist releases the moment you steer away.' },
     { key: '_touchedit', label: 'Touch layout', type: 'touchedit', help: 'Drag the on-screen buttons where your thumbs are, make them bigger or dimmer. Portrait and landscape are edited separately.' },
     { key: '_touchreset', label: 'Reset touch layout', type: 'touchreset', help: 'Put every button back where the game ships it.' },
   ] },
@@ -195,6 +197,8 @@ const SETTINGS_TABS = [
   ] },
   { id: 'optimize', label: 'Optimize', icon: 'bolt', rows: [
     { key: 'prewarm', label: 'Pre-warm on the menu', type: 'toggle', help: 'While you sit in the menus, compile the shaders and warm the pools your kit needs, so the first match of a session starts without a compile hitch. Costs a little battery.' },
+    { key: '_gpucheck', label: 'Graphics compatibility check', type: 'gpucheck', help: 'Runs a 4-part render self-test (texture arrays, multi-target rendering, sRGB). On drivers where a part fails, the game switches to a compatibility path that renders correctly instead of dark maps. Safe to run any time.' },
+    { key: 'gpuMode', label: 'Compatibility mode', type: 'seg', options: [['auto', 'Auto'], ['legacy', 'Always']], help: 'Auto: the self-test decides. Always: force the legacy procedural surface path (use this if surfaces still render wrong after the check).' },
     { key: '_profile', label: 'Local profile', type: 'link', help: 'Create, switch, rename or delete a local profile. Everything stays in this browser.' },
   ] },
   { id: 'audio', label: 'Audio', icon: 'speaker', rows: [
@@ -934,6 +938,20 @@ export class Menus {
     this._touchLayout = rec;
     safeCall(() => this.api.setTouchLayout && this.api.setTouchLayout(rec));
     this.toast('Touch layout reset to the default', { icon: GLYPHS.reset });
+  }
+
+  // Settings → Optimize → Graphics compatibility check: runs the render self-test (main.js api.gpuCheck),
+  // reports per-test pass/fail, and on a tier change tells the user a reload applies it.
+  _runGpuCheck() {
+    let res = null;
+    try { res = this.api.gpuCheck && this.api.gpuCheck(); } catch (e) { console.error('[inkwave] gpu check', e); }
+    if (!res || !res.ran) { this.toast('Compatibility check failed to run', { icon: GLYPHS.bolt }); return; }
+    const v = res.verdict;
+    const failed = ['arraySampling', 'mrt', 'srgbAttachment', 'srgbBlending'].filter((k) => !v[k]);
+    if (v.error) { this.toast(`Check crashed: ${v.error}`, { icon: GLYPHS.bolt }); return; }
+    if (!failed.length) this.toast('All 4 GPU checks passed — full graphics path', { icon: GLYPHS.bolt });
+    else if (res.tier === 'legacy') this.toast(`${failed.length} check${failed.length > 1 ? 's' : ''} failed — legacy path set. Reload to apply.`, { icon: GLYPHS.bolt });
+    else this.toast(`${failed.length} check${failed.length > 1 ? 's' : ''} failed — compatibility path set. Reload to apply.`, { icon: GLYPHS.bolt });
   }
 
   _scr_touchedit() {
@@ -2335,6 +2353,7 @@ export class Menus {
         else if (r.type === 'touchedit') ctrl = { el: h('span', { class: 'iw-row__link' }, 'EDIT', h('i', { html: GLYPHS.pencil })), accept: () => { this._sfx('ui_click'); this._go('touchedit'); } };
         else if (r.key === '_profile') ctrl = { el: h('span', { class: 'iw-row__link' }, 'MANAGE', h('i', { html: GLYPHS.next })), accept: () => { this._sfx('ui_click'); this._go('profiles'); } };
         else if (r.type === 'touchreset') ctrl = { el: h('span', { class: 'iw-row__link' }, 'RESET', h('i', { html: GLYPHS.reset })), accept: () => { this._sfx('ui_toggle'); this._resetTouchLayout(); } };
+        else if (r.type === 'gpucheck') ctrl = { el: h('span', { class: 'iw-row__link iw-row__link--gpu' }, 'RUN', h('i', { html: GLYPHS.bolt })), accept: () => { this._sfx('ui_click'); this._runGpuCheck(); } };
         else if (r.type === 'slider') ctrl = this._slider(r, s[r.key]);
         else if (r.type === 'toggle') ctrl = this._toggle(r, s[r.key]);
         else {

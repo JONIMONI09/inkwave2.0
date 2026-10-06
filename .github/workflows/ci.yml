@@ -50,7 +50,10 @@ jobs:
           npx -y @puppeteer/browsers install chrome@stable --path "$HOME/chrome" > chrome-path.txt
           echo "path=$(head -1 chrome-path.txt | awk '{print $2}')" >> "$GITHUB_OUTPUT"
       - name: Boot the game and autopilot a match
-        timeout-minutes: 8
+        # worst documented budget: boot 74-126 s on SwiftShader (E-007) + the up-front stage-shader
+        # precompile (serial minutes on software GL, E-008) + the stepped intro/play. 8 min killed a
+        # healthy run before any game assertion; the assertions themselves still fail the job.
+        timeout-minutes: 12
         env:
           CHROME: ${{ steps.chrome.outputs.path }}
           # the CI image runs as root: Chrome for Testing refuses to start its sandbox there

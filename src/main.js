@@ -33,6 +33,7 @@ import { Showcase } from './game/showcase.js';
 import { ZoneMarks } from './fx/zoneMarks.js';
 import { BOSS_MODE } from './boss/bossMode.js';
 import { Log } from './core/logger.js';
+import { GpuSelfTest, verdictToTier, describeVerdict } from './core/gpu-selftest.js';
 import { Perf } from './core/perf.js';
 
 const params = new URLSearchParams(location.search);
@@ -58,6 +59,16 @@ async function loadModule(path, stubName) {
 class Game {
   async boot() {
     const t0 = performance.now();
+    // GPU compatibility self-test (?gpudiag runs it verbosely; the tier logic also runs on demand from Settings).
+    // The verdict maps to a render tier — see _applyRenderTier. Only a REAL render+readback decides; extension
+    // probes are untrustworthy on the Adreno/ANGLE stacks this exists for.
+    this.gpuTest = new GpuSelfTest(G.renderer);
+    if (params.has('gpudiag')) {
+      const v = this.gpuTest.run();
+      Log.info('gpu', v.info || '');
+      Log.info('gpu', describeVerdict(v));
+      if (v.error) Log.error('gpu', v.error);
+    }
     // real top-down thumbnails for the stage cards, generated from each layout's geometry
     for (const m of MAPS) { try { m.thumb = layoutThumbSVG(MAP_LAYOUTS[m.layout || m.id], m.theme); } catch (e) { console.warn('thumb', m.id, e); } }
     this.settings = G.settings = loadJSON('inkwave.settings', DEFAULT_SETTINGS);
@@ -68,6 +79,12 @@ class Game {
       Object.assign(this.settings, { quality: 'potato', shadows: false, bloom: false, fpsCap: 60, showFps: true });
       saveJSON('inkwave.settings', this.settings);
     }
+    // touch devices get the touch-only auto-aim assist offered once, off by default (never auto-enabled:
+    // it is a gameplay-affecting setting, and a silent one that changes how the game plays)
+    if (this.settings.touchAutoAim === undefined) this.settings.touchAutoAim = false;
+    if (this.settings.autoFireOnAim === undefined) this.settings.autoFireOnAim = false;
+    if (this.settings.gpuMode === undefined) this.settings.gpuMode = 'auto';   // 'auto' | 'legacy'
+    if (this.settings.gpuTier === undefined) this.settings.gpuTier = null;     // cached self-test verdict tier
     // desktop app: the window's fullscreen state is owned by the native shell; mirror it into settings for the menu
     if (window.inkwaveNative) {
       this.settings.fullscreen = window.inkwaveNative.isFullScreen();
@@ -143,7 +160,10 @@ class Game {
     this.murals = await createMuralTexture();
     try {
       const { createTextureLibrary } = await import('./world/texlib.js');
-      this.texlib = await createTextureLibrary(G.renderer, { size: q.paintAtlas >= 4096 ? 512 : 256 });
+      // linearAlbedo: the self-test proved the driver mishandles sRGB array attachments — build the
+      // albedo layer linear instead (the sampler then returns the same linear values through a path
+      // the driver demonstrably gets right; no shader-side decode needed, encode/decode cancel)
+      this.texlib = await createTextureLibrary(G.renderer, { size: q.paintAtlas >= 4096 ? 512 : 256, linearAlbedo: this.gpuTier === 'linearAlbedo' });
     } catch (e) { console.error('[inkwave] texture library failed — procedural fallback', e); this.texlib = null; }
     await this._buildWorld(map);
     this.zoneMarks = new ZoneMarks(scene);   // Zone Control ground markings: build / clear themselves on 'match:state'
@@ -239,6 +259,31 @@ class Game {
     };
   }
 
+  // Decide the render tier once per session, before the first texlib build. Order of authority:
+  //   1. settings.gpuMode === 'legacy'  → compatibility mode (manual)
+  //   2. settings.gpuMode === 'auto'    → the self-test verdict maps to a tier
+  //   3. settings.gpuTier set           → a previously computed tier (cache; no re-test every boot)
+  // Anything the tests DID prove broken falls back: sRGB-only → linear albedo attachment; array/MRT
+  // problems → the pre-texlib procedural material path (texlib = null → USE_TEXLIB off), which renders
+  // correctly on every driver.
+  _resolveGpuTier() {
+    if (this._gpuTierResolved) return;
+    this._gpuTierResolved = true;
+    if (this.settings.gpuMode === 'legacy') { this.gpuTier = 'legacy'; }
+    else if (this.settings.gpuTier) { this.gpuTier = this.settings.gpuTier; }
+    else {
+      const v = this.gpuTest?.run();
+      if (v) {
+        Log.info('gpu', v.info || '');
+        Log.info('gpu', describeVerdict(v));
+        this.gpuTier = verdictToTier(v, false);
+        this.settings.gpuTier = this.gpuTier;
+        saveJSON('inkwave.settings', this.settings);
+      }
+    }
+    if (this.gpuTier && this.gpuTier !== 'full') Log.info('gpu', `render tier: ${this.gpuTier} (compatibility fallback)`);
+  }
+
   // Build (or rebuild) everything that depends on the stage layout: level, collision, paint atlas, surface material,
   // decor, navigation graph and minimap. Environment/FX/projectiles persist across stages.
   // mode: 'turf' | 'zones' — a stage with Zone Control-only pieces (variants.js) builds a separate world for that mode
@@ -262,6 +307,9 @@ class Game {
     this.mapDef = map;
     const q = QUALITY[this.settings.quality] || QUALITY.high;
     const step = Log.steps('build');   // per-chunk timings: this build is <1 s on a desktop and can take tens of seconds on a phone — the log names the slow chunk
+    // the render tier is decided once per session (boot, before the first texlib is built) — see _resolveGpuTier
+    this._resolveGpuTier();
+    if (this.gpuTier === 'legacy') this.texlib = null;   // manual compatibility mode / proven-broken stack
     // set dressing first: solid props hand back collision boxes that become part of the level (physics, nav, paint)
     const colliders = [];
     if (this.PropKit) {
@@ -475,6 +523,22 @@ class Game {
       resumeMatch: () => self.resume(),
       // online results: the host can take the room back to the lobby without waiting out the timer
       netBackToLobby: () => { if (G.netm && G.net?.isHost && self.match?.state === 'results') { clearTimeout(self._netEndT); G.netm.sendEnd(); self.netMatchEnd(); } },
+      // Settings → Optimize → Graphics compatibility: run the self-test on demand and report per-test
+      // results. Applies the recommended tier automatically unless the user forced a mode.
+      gpuCheck: () => {
+        const v = this.gpuTest?.run();
+        if (!v) return { ran: false, error: 'self-test unavailable' };
+        Log.info('gpu', v.info || '');
+        Log.info('gpu', describeVerdict(v));
+        if (v.error) Log.error('gpu', v.error);
+        const tier = verdictToTier(v, this.settings.gpuMode === 'legacy');
+        this.gpuTier = tier;
+        this.settings.gpuTier = tier;
+        saveJSON('inkwave.settings', this.settings);
+        // a tier change needs a world rebuild to take effect: the menu flow prompts a reload,
+        // _applyRenderTier picks it up on the next _buildWorldNow either way
+        return { ran: true, verdict: v, tier, describe: describeVerdict(v) };
+      },
       quitMatch: () => self.quitToMenu(),
       // touch-layout editor (Settings → Touch layout): the menus own the record, the live layer re-applies it so the
       // buttons move under the finger while you drag them
