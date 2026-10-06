@@ -5,6 +5,20 @@ progresses; keep the completed list factual and the remaining list actionable.
 
 Last updated: 2026-10-06
 
+### CI repo-policy fixes + smoke eval-timeout (2026-10-06, same branch `fix/gpu-selftest-shaders-android`)
+
+**Actions "Startup failure"** (`actions/checkout@v4 … not allowed … all actions must be owned by JONIMONI09`):
+the repo had Actions restricted to `local_only` — fixed by API: `PUT /actions/permissions
+{enabled:true, allowed_actions:"all"}` (verified via GET). Pages source was already "GitHub Actions" (owner set
+it in the UI); the deploy job should now start on the next main run.
+
+**Smoke "eval error" → SMOKE FAIL despite reaching `playing`** (run 37457303668): puppeteer's default
+protocolTimeout (180 s) kills Runtime.evaluate while CI's software-GL boot + shader compile block the main
+thread for minutes. Fixed: `protocolTimeout: 600000` in tools/play.mjs. The warn-not-block behaviour from the
+previous pass was already working (the ::warning annotation shows on the run).
+
+Checks: `node --check tools/play.mjs` → ok; full suites unchanged (134 assertions green, 14 suites).
+
 ### E-011: GPU self-test shaders repaired, honest capability verdicts, Android polish (2026-10-06, branch `fix/gpu-selftest-shaders-android`)
 
 **The false-legacy bug (E-011).** Every desktop GPU (user's Firefox/GTX 980 evidence) reported FAIL FAIL FAIL FAIL
