@@ -62,13 +62,9 @@ class Game {
     // GPU compatibility self-test (?gpudiag runs it verbosely; the tier logic also runs on demand from Settings).
     // The verdict maps to a render tier — see _applyRenderTier. Only a REAL render+readback decides; extension
     // probes are untrustworthy on the Adreno/ANGLE stacks this exists for.
-    this.gpuTest = new GpuSelfTest(G.renderer);
-    if (params.has('gpudiag')) {
-      const v = this.gpuTest.run();
-      Log.info('gpu', v.info || '');
-      Log.info('gpu', describeVerdict(v));
-      if (v.error) Log.error('gpu', v.error);
-    }
+    // NOTE: G.renderer does not exist until the renderer is created further down — the GpuSelfTest is
+    // constructed there. Building it earlier ran the tier test on a null renderer and crashed boot
+    // ("can't access property 'getContext', r is null").
     // real top-down thumbnails for the stage cards, generated from each layout's geometry
     for (const m of MAPS) { try { m.thumb = layoutThumbSVG(MAP_LAYOUTS[m.layout || m.id], m.theme); } catch (e) { console.warn('thumb', m.id, e); } }
     this.settings = G.settings = loadJSON('inkwave.settings', DEFAULT_SETTINGS);
@@ -122,6 +118,14 @@ class Game {
     // renderer / scene
     this.R = new Renderer(app, this.settings);
     G.renderer = this.R.renderer;
+    // now a renderer exists: build the self-test and honour ?gpudiag (moved here from the top of boot)
+    this.gpuTest = new GpuSelfTest(G.renderer);
+    if (params.has('gpudiag')) {
+      const v = this.gpuTest.run();
+      Log.info('gpu', v.info || '');
+      Log.info('gpu', describeVerdict(v));
+      if (v.error) Log.error('gpu', v.error);
+    }
     const scene = (G.scene = new THREE.Scene());
     const camera = (G.camera = new THREE.PerspectiveCamera(this.settings.fov, innerWidth / innerHeight, 0.15, 6500));
     camera.position.set(0, 40, -60);
